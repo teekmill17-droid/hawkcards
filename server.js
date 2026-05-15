@@ -472,6 +472,41 @@ async function lookupViaEbayScrape(keywords) {
   return { prices, recentSales: recentSales.slice(0, 10), source: 'eBay Sold Listings' };
 }
 
+async function lookupVia130Point(keywords) {
+  const url = 'https://130point.com/sales/?' + new URLSearchParams({ search: keywords });
+  const r = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Referer': 'https://130point.com/',
+    },
+    redirect: 'follow',
+  });
+  if (!r.ok) throw new Error(`130point returned ${r.status}`);
+  const html = await r.text();
+  if (html.length < 500) throw new Error('130point returned empty page');
+
+  const prices = [];
+
+  // Try table cells with dollar amounts first
+  for (const m of html.matchAll(/<td[^>]*>\s*\$\s*([\d,]+\.?\d{0,2})\s*<\/td>/g)) {
+    const p = parseFloat(m[1].replace(/,/g, ''));
+    if (p > 0.25 && p < 50000) prices.push(p);
+  }
+
+  // Fallback: any inline dollar amount
+  if (prices.length < 3) {
+    for (const m of html.matchAll(/\$\s*([\d,]+\.\d{2})\b/g)) {
+      const p = parseFloat(m[1].replace(/,/g, ''));
+      if (p > 0.25 && p < 50000) prices.push(p);
+    }
+  }
+
+  if (prices.length < 2) throw new Error('Not enough sales found on 130point');
+  return { prices, recentSales: [], source: '130point.com' };
+}
+
 app.post('/api/ebay-price', async (req, res) => {
   const { player_name, card_id } = req.body;
   if (!player_name) return res.status(400).json({ error: 'Player name required' });
@@ -484,7 +519,12 @@ app.post('/api/ebay-price', async (req, res) => {
     if (appId) {
       result = await lookupViaFindingAPI(appId, keywords);
     } else {
-      result = await lookupViaEbayScrape(keywords);
+      try {
+        result = await lookupViaEbayScrape(keywords);
+      } catch (e1) {
+        console.log('eBay scrape failed, trying 130point:', e1.message);
+        result = await lookupVia130Point(keywords);
+      }
     }
 
     const { prices, recentSales, source } = result;

@@ -3,6 +3,15 @@
 // ==========================================
 
 const sportEmoji = { Baseball: '⚾', Football: '🏈', Basketball: '🏀' };
+
+function handleImgError(el, sport) {
+  const wrap = el.closest('.card-img-wrap');
+  if (wrap) wrap.outerHTML = `<div class="card-placeholder">${sportEmoji[sport] || '🃏'}</div>`;
+}
+function handleDetailImgError(el, sport) {
+  const wrap = el.closest('.detail-img-wrap');
+  if (wrap) wrap.outerHTML = `<div class="detail-img-placeholder">${sportEmoji[sport] || '🃏'}</div>`;
+}
 let currentFilter = 'All';
 let bulkMode = false;
 let scanQueue = []; // array of { file, preview, filename }
@@ -187,7 +196,7 @@ async function loadCards() {
       <div class="card-tile" style="animation-delay:${i * 0.03}s" onclick="openDetail(${card.id})">
         ${card.image_path ? `
           <div class="card-img-wrap">
-            <img src="${card.image_path}" alt="" loading="lazy">
+            <img src="${card.image_path}" alt="" loading="lazy" onerror="handleImgError(this,'${card.sport}')">
             <div class="card-img-gradient"></div>
             ${card.is_duplicate ? '<span class="dupe-badge">DUPE</span>' : ''}
             ${card.is_graded ? `<span class="graded-badge">${card.psa_grade || 'GRADED'}</span>` : ''}
@@ -242,7 +251,7 @@ async function openDetail(id) {
 
     document.getElementById('detail-content').innerHTML = `
       ${card.image_path
-        ? `<div class="detail-img-wrap"><img class="detail-img" src="${card.image_path}" alt=""></div>`
+        ? `<div class="detail-img-wrap"><img class="detail-img" src="${card.image_path}" alt="" onerror="handleDetailImgError(this,'${card.sport}')"></div>`
         : `<div class="detail-img-placeholder">${sportEmoji[card.sport] || '🃏'}</div>`}
 
       <div class="detail-body">
@@ -321,6 +330,24 @@ async function openDetail(id) {
             </div>
           </div>
         ` : ''}
+
+        ${(() => {
+          const searchQ = [card.player_name, card.year, card.brand, card.set_name,
+            card.card_number ? `#${card.card_number}` : '', card.parallel].filter(Boolean).join(' ');
+          const enc = encodeURIComponent(searchQ);
+          const encName = encodeURIComponent(card.player_name || '');
+          return `
+            <div class="detail-section">
+              <p class="detail-section-title">Search Online</p>
+              <div class="search-links">
+                <a class="search-link-btn" href="https://www.ebay.com/sch/i.html?_nkw=${enc}&LH_Complete=1&LH_Sold=1&_sop=13" target="_blank">eBay Sold</a>
+                <a class="search-link-btn" href="https://130point.com/sales/?search=${enc}" target="_blank">130point</a>
+                <a class="search-link-btn" href="https://www.comc.com/Cards?SearchQuery=${encName}" target="_blank">COMC</a>
+                <a class="search-link-btn" href="https://www.psacard.com/cardfacts/?search=${encName}" target="_blank">PSA</a>
+              </div>
+            </div>
+          `;
+        })()}
       </div>
     `;
 
