@@ -70,8 +70,27 @@ function closeSettings() {
   document.getElementById('settings-modal').style.display = 'none';
 }
 
+async function saveGroqKey() {
+  const apiKey = document.getElementById('groq-key-input').value.trim();
+  if (!apiKey) return;
+  try {
+    const res = await fetch('/api/settings/groq', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ apiKey })
+    });
+    if (res.ok) {
+      showToast('Groq key saved! Card recognition is ready.', 'success');
+      document.getElementById('groq-status').innerHTML = '<p style="color:var(--green)">✓ Saved — AI recognition ready</p>';
+    }
+  } catch (e) {
+    showToast('Failed to save key', 'error');
+  }
+}
+
 async function saveGeminiKey() {
-  const apiKey = document.getElementById('gemini-key-input').value.trim();
+  const el = document.getElementById('gemini-key-input');
+  const apiKey = el ? el.value.trim() : '';
   if (!apiKey) return;
   try {
     const res = await fetch('/api/settings/gemini', {
@@ -79,10 +98,7 @@ async function saveGeminiKey() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ apiKey })
     });
-    if (res.ok) {
-      showToast('Gemini key saved! Card recognition is ready.', 'success');
-      document.getElementById('gemini-status').innerHTML = '<p style="color:var(--green)">✓ Saved — AI recognition ready</p>';
-    }
+    if (res.ok) showToast('Gemini key saved!', 'success');
   } catch (e) {
     showToast('Failed to save key', 'error');
   }
@@ -630,14 +646,14 @@ function clearScans() {
 async function processScans() {
   if (!scanQueue.length) return;
 
-  let hasGemini = false;
+  let hasAI = false;
   try {
     const s = await (await fetch('/api/settings')).json();
-    hasGemini = s.hasGeminiKey;
+    hasAI = s.hasAiKey;
   } catch (e) {}
 
-  if (!hasGemini) {
-    // No Gemini key — show blank review cards for manual entry
+  if (!hasAI) {
+    // No AI key — show blank review cards for manual entry
     bulkReviewCards = scanQueue.map(item => ({
       image_path: item.path, player_name: '', team: '', year: null,
       sport: 'Baseball', brand: '', card_number: '', set_name: '',
@@ -836,13 +852,13 @@ function openFormWithImage(imagePath) {
 }
 
 async function recognizeCard(imagePath) {
-  let hasGemini = false;
+  let hasAI = false;
   try {
     const s = await (await fetch('/api/settings')).json();
-    hasGemini = s.hasGeminiKey;
+    hasAI = s.hasAiKey;
   } catch (e) {}
 
-  if (!hasGemini) {
+  if (!hasAI) {
     openFormWithImage(imagePath);
     return;
   }
