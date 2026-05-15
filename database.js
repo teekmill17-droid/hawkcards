@@ -50,6 +50,22 @@ async function initDB() {
   db.run("CREATE INDEX IF NOT EXISTS idx_year ON cards(year)");
 
   db.run(`
+    CREATE TABLE IF NOT EXISTS price_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      card_id INTEGER NOT NULL,
+      estimated_value REAL DEFAULT 0,
+      value_range_low REAL DEFAULT 0,
+      value_range_high REAL DEFAULT 0,
+      recent_sales_count INTEGER DEFAULT 0,
+      recent_sales_json TEXT DEFAULT '[]',
+      source TEXT DEFAULT '',
+      looked_up_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  db.run("CREATE INDEX IF NOT EXISTS idx_ph_card ON price_history(card_id)");
+
+  db.run(`
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT
