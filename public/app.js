@@ -421,8 +421,10 @@ async function editCard(id) {
   if (card.image_path) {
     document.getElementById('form-image-preview').style.display = 'block';
     document.getElementById('form-preview-img').src = card.image_path;
+    document.getElementById('form-no-image').style.display = 'none';
   } else {
     document.getElementById('form-image-preview').style.display = 'none';
+    document.getElementById('form-no-image').style.display = 'block';
   }
 
   switchView('add');
@@ -457,6 +459,7 @@ function resetForm() {
   document.getElementById('form-title').textContent = 'Add Card';
   document.getElementById('save-btn').textContent = 'Add to Collection';
   document.getElementById('form-image-preview').style.display = 'none';
+  document.getElementById('form-no-image').style.display = 'block';
 
   const fields = ['player_name', 'team', 'year', 'brand', 'card_number', 'set_name', 'subset', 'parallel', 'psa_grade', 'estimated_value', 'purchase_price', 'notes'];
   fields.forEach(f => { const el = document.getElementById(`f-${f}`); if (el) el.value = ''; });
@@ -475,6 +478,27 @@ function cancelForm() {
 function removeFormImage() {
   currentImagePath = '';
   document.getElementById('form-image-preview').style.display = 'none';
+  document.getElementById('form-no-image').style.display = 'block';
+}
+
+async function replaceFormImage(input) {
+  const file = input.files[0];
+  if (!file) return;
+  input.value = '';
+  const formData = new FormData();
+  formData.append('image', file);
+  showToast('Uploading photo...', 'info');
+  try {
+    const res = await fetch('/api/upload', { method: 'POST', body: formData });
+    const result = await res.json();
+    currentImagePath = result.path;
+    document.getElementById('form-preview-img').src = result.path;
+    document.getElementById('form-image-preview').style.display = 'block';
+    document.getElementById('form-no-image').style.display = 'none';
+    showToast('Photo uploaded!');
+  } catch (e) {
+    showToast('Upload failed', 'error');
+  }
 }
 
 function getFormData() {
@@ -1052,6 +1076,7 @@ function openFormWithImage(imagePath) {
   currentImagePath = imagePath;
   document.getElementById('form-image-preview').style.display = 'block';
   document.getElementById('form-preview-img').src = imagePath;
+  document.getElementById('form-no-image').style.display = 'none';
   resetScan();
   switchView('add');
   setTimeout(() => document.getElementById('f-player_name')?.focus(), 100);
@@ -1239,8 +1264,10 @@ function editBulkCard(index) {
   if (card.image_path) {
     document.getElementById('form-image-preview').style.display = 'block';
     document.getElementById('form-preview-img').src = card.image_path;
+    document.getElementById('form-no-image').style.display = 'none';
   } else {
     document.getElementById('form-image-preview').style.display = 'none';
+    document.getElementById('form-no-image').style.display = 'block';
   }
 
   switchView('add');

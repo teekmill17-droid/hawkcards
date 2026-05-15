@@ -840,3 +840,20 @@ body {
 .search-link-btn:hover {
   background: var(--surface-3); color: var(--accent); border-color: var(--accent-border);
 }
+
+/* ===== Form photo upload ===== */
+.form-img-actions {
+  display: flex; gap: 8px; margin-top: 8px; align-items: center;
+}
+.change-img-btn, .add-img-btn {
+  display: inline-block; padding: 7px 14px; border-radius: 8px;
+  border: 1px solid var(--border-2); background: var(--surface-2);
+  color: var(--text-2); font-size: 12px; font-weight: 600;
+  cursor: pointer; transition: all 0.15s; font-family: 'Outfit', sans-serif;
+}
+.change-img-btn:hover, .add-img-btn:hover {
+  background: var(--surface-3); color: var(--accent); border-color: var(--accent-border);
+}
+.form-no-image {
+  margin-bottom: 12px;
+}

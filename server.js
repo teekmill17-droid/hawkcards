@@ -472,6 +472,59 @@ async function lookupViaEbayScrape(keywords) {
   return { prices, recentSales: recentSales.slice(0, 10), source: 'eBay Sold Listings' };
 }
 
+async function lookupViaMainn(keywords) {
+  const url = 'https://mavin.io/search?' + new URLSearchParams({ q: keywords });
+  const r = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.9',
+    },
+    redirect: 'follow',
+  });
+  if (!r.ok) throw new Error(`Mavin returned ${r.status}`);
+  const html = await r.text();
+  if (html.length < 500) throw new Error('Mavin returned empty page');
+
+  const prices = [];
+  const recentSales = [];
+
+  // Mavin shows sold prices in spans/divs with dollar amounts
+  // Try JSON-LD structured data first
+  for (const m of html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)) {
+    try {
+      const d = JSON.parse(m[1]);
+      const items = d['@type'] === 'ItemList' ? (d.itemListElement || []) : [];
+      for (const el of items) {
+        const price = parseFloat(el?.offers?.price || el?.price || 0);
+        if (price > 0.25 && price < 50000) {
+          prices.push(price);
+          recentSales.push({ title: el.name || '', price, date: '', url: el.url || '' });
+        }
+      }
+    } catch (e) {}
+  }
+
+  // Fallback: data-price attributes and sale price elements
+  if (prices.length < 2) {
+    for (const m of html.matchAll(/data-price="([\d.]+)"/g)) {
+      const p = parseFloat(m[1]);
+      if (p > 0.25 && p < 50000) prices.push(p);
+    }
+  }
+
+  // Last resort: dollar amounts in sale/price contexts
+  if (prices.length < 2) {
+    for (const m of html.matchAll(/class="[^"]*(?:price|sale|sold)[^"]*"[^>]*>\s*\$?\s*([\d,]+\.?\d{0,2})/gi)) {
+      const p = parseFloat(m[1].replace(/,/g, ''));
+      if (p > 0.25 && p < 50000) prices.push(p);
+    }
+  }
+
+  if (prices.length < 2) throw new Error('Not enough sales found on Mavin');
+  return { prices, recentSales: recentSales.slice(0, 10), source: 'Mavin.io' };
+}
+
 async function lookupVia130Point(keywords) {
   const url = 'https://130point.com/sales/?' + new URLSearchParams({ search: keywords });
   const r = await fetch(url, {
@@ -488,21 +541,16 @@ async function lookupVia130Point(keywords) {
   if (html.length < 500) throw new Error('130point returned empty page');
 
   const prices = [];
-
-  // Try table cells with dollar amounts first
   for (const m of html.matchAll(/<td[^>]*>\s*\$\s*([\d,]+\.?\d{0,2})\s*<\/td>/g)) {
     const p = parseFloat(m[1].replace(/,/g, ''));
     if (p > 0.25 && p < 50000) prices.push(p);
   }
-
-  // Fallback: any inline dollar amount
   if (prices.length < 3) {
     for (const m of html.matchAll(/\$\s*([\d,]+\.\d{2})\b/g)) {
       const p = parseFloat(m[1].replace(/,/g, ''));
       if (p > 0.25 && p < 50000) prices.push(p);
     }
   }
-
   if (prices.length < 2) throw new Error('Not enough sales found on 130point');
   return { prices, recentSales: [], source: '130point.com' };
 }
@@ -519,12 +567,22 @@ app.post('/api/ebay-price', async (req, res) => {
     if (appId) {
       result = await lookupViaFindingAPI(appId, keywords);
     } else {
-      try {
-        result = await lookupViaEbayScrape(keywords);
-      } catch (e1) {
-        console.log('eBay scrape failed, trying 130point:', e1.message);
-        result = await lookupVia130Point(keywords);
+      const sources = [
+        { name: 'Mavin', fn: () => lookupViaMainn(keywords) },
+        { name: '130point', fn: () => lookupVia130Point(keywords) },
+        { name: 'eBay', fn: () => lookupViaEbayScrape(keywords) },
+      ];
+      let lastErr;
+      for (const src of sources) {
+        try {
+          result = await src.fn();
+          break;
+        } catch (e) {
+          console.log(`${src.name} failed:`, e.message);
+          lastErr = e;
+        }
       }
+      if (!result) throw lastErr;
     }
 
     const { prices, recentSales, source } = result;
