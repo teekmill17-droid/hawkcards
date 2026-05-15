@@ -619,6 +619,48 @@ async function lookupVia130Point(keywords) {
   return { prices, recentSales: [], source: '130point.com' };
 }
 
+async function lookupViaClaudeEstimate(anthropicKey, keywords) {
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'x-api-key': anthropicKey,
+      'anthropic-version': '2023-06-01',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 120,
+      messages: [{
+        role: 'user',
+        content: `You are a sports card market expert. Estimate the eBay resale value for this card in Near Mint condition:
+
+"${keywords}"
+
+Consider the player's popularity, set rarity, and parallel. Common base cards are usually $0.25–$2. Star rookies and rare parallels can be hundreds.
+
+Return ONLY JSON, no other text:
+{"low": 8.00, "avg": 12.50, "high": 18.00}`
+      }]
+    })
+  });
+  if (!r.ok) throw new Error(`Claude estimate: ${r.status}`);
+  const data = await r.json();
+  const text = data?.content?.[0]?.text || '';
+  const m = text.match(/\{[\s\S]*\}/);
+  if (!m) throw new Error('No JSON in Claude response');
+  const parsed = JSON.parse(m[0]);
+  const avg = parseFloat(parsed.avg);
+  if (!avg || avg <= 0) throw new Error('Invalid estimate');
+  return {
+    estimated_value: Math.round(avg * 100) / 100,
+    value_range_low: Math.round((parseFloat(parsed.low) || avg * 0.7) * 100) / 100,
+    value_range_high: Math.round((parseFloat(parsed.high) || avg * 1.3) * 100) / 100,
+    recent_sales_count: 0,
+    recentSales: [],
+    source: 'AI Estimate',
+  };
+}
+
 app.post('/api/ebay-price', async (req, res) => {
   const { player_name, card_id } = req.body;
   if (!player_name) return res.status(400).json({ error: 'Player name required' });
@@ -632,11 +674,14 @@ app.post('/api/ebay-price', async (req, res) => {
       result = await lookupViaFindingAPI(appId, keywords);
     } else {
       const geminiKey = getGeminiKey();
+      const anthropicKey = getAnthropicKey();
       const sources = [
         ...(geminiKey ? [{ name: 'Gemini', fn: () => lookupViaGeminiSearch(geminiKey, keywords) }] : []),
         { name: 'SportsCardsPro', fn: () => lookupViaSportsCardsPro(keywords) },
         { name: '130point', fn: () => lookupVia130Point(keywords) },
         { name: 'eBay', fn: () => lookupViaEbayScrape(keywords) },
+        // Claude estimate is the guaranteed final fallback — works as long as the AI key is set
+        ...(anthropicKey ? [{ name: 'Claude', fn: () => lookupViaClaudeEstimate(anthropicKey, keywords) }] : []),
       ];
       let lastErr;
       for (const src of sources) {
@@ -651,27 +696,33 @@ app.post('/api/ebay-price', async (req, res) => {
       if (!result) throw lastErr;
     }
 
-    const { prices, recentSales, source } = result;
-    if (!prices.length) return res.json({ estimated_value: 0, recent_sales_count: 0, message: 'No recent eBay sales found' });
+    // Some sources (Claude estimate) return pre-computed stats; others return raw prices
+    const stats = result.estimated_value !== undefined
+      ? {
+          estimated_value: result.estimated_value,
+          value_range_low: result.value_range_low || result.estimated_value,
+          value_range_high: result.value_range_high || result.estimated_value,
+          recent_sales_count: result.recent_sales_count || 0,
+        }
+      : calcStats(result.prices || []);
 
-    const stats = calcStats(prices);
-    const payload = { ...stats, recent_sales: recentSales, source };
+    if (!stats || !stats.estimated_value) {
+      return res.json({ estimated_value: 0, recent_sales_count: 0, message: 'No price data found' });
+    }
 
-    // Store in price history if we have a card ID
+    const payload = { ...stats, recent_sales: result.recentSales || [], source: result.source };
+
     if (card_id) {
       run(`INSERT INTO price_history (card_id, estimated_value, value_range_low, value_range_high, recent_sales_count, recent_sales_json, source)
            VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [card_id, stats.estimated_value, stats.value_range_low || 0, stats.value_range_high || 0,
-         stats.recent_sales_count, JSON.stringify(recentSales || []), source]);
+         stats.recent_sales_count, JSON.stringify(result.recentSales || []), result.source]);
     }
 
     res.json(payload);
   } catch (e) {
-    console.error('eBay price error:', e.message);
-    res.status(500).json({
-      error: 'Automated lookup blocked — use Search Online links below to check price manually, then tap "Set Price" to save it.',
-      keywords,
-    });
+    console.error('Price lookup error:', e.message);
+    res.status(500).json({ error: 'Price lookup failed — tap Set Price to enter manually', keywords });
   }
 });
 
