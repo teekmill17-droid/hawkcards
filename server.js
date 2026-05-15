@@ -359,9 +359,20 @@ app.post('/api/upload/bulk', upload.array('images', 50), async (req, res) => {
 
 function buildKeywords(card) {
   const { player_name, year, brand, set_name, card_number, parallel, psa_grade } = card;
-  return [player_name, year, brand, set_name,
-    card_number ? `#${card_number}` : '', parallel, psa_grade, 'card']
-    .filter(Boolean).join(' ');
+  const parts = [player_name, year];
+  // Don't double up brand if set_name already starts with it (e.g. "Leaf" + "Leaf HYPE!")
+  const setLower = (set_name || '').toLowerCase();
+  const brandLower = (brand || '').toLowerCase();
+  if (set_name && brand && setLower.startsWith(brandLower)) {
+    parts.push(set_name);
+  } else {
+    if (brand) parts.push(brand);
+    if (set_name) parts.push(set_name);
+  }
+  if (parallel) parts.push(parallel);
+  if (card_number) parts.push(`#${card_number}`);
+  if (psa_grade) parts.push(`PSA ${psa_grade}`);
+  return parts.filter(Boolean).join(' ');
 }
 
 function calcStats(prices) {
@@ -472,29 +483,28 @@ async function lookupViaEbayScrape(keywords) {
   return { prices, recentSales: recentSales.slice(0, 10), source: 'eBay Sold Listings' };
 }
 
+// Fetch HTML via allorigins.win proxy to bypass Railway IP blocks
+async function proxiedFetch(targetUrl) {
+  const proxy = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(targetUrl);
+  const r = await fetch(proxy, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+  if (!r.ok) throw new Error(`Proxy returned ${r.status} for ${targetUrl}`);
+  const text = await r.text();
+  if (text.length < 200) throw new Error('Proxy returned empty response');
+  return text;
+}
+
 async function lookupViaMainn(keywords) {
   const url = 'https://mavin.io/search?' + new URLSearchParams({ q: keywords });
-  const r = await fetch(url, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      'Accept-Language': 'en-US,en;q=0.9',
-    },
-    redirect: 'follow',
-  });
-  if (!r.ok) throw new Error(`Mavin returned ${r.status}`);
-  const html = await r.text();
-  if (html.length < 500) throw new Error('Mavin returned empty page');
+  const html = await proxiedFetch(url);
 
   const prices = [];
   const recentSales = [];
 
-  // Mavin shows sold prices in spans/divs with dollar amounts
-  // Try JSON-LD structured data first
+  // Mavin embeds sold listing data in JSON-LD
   for (const m of html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)) {
     try {
       const d = JSON.parse(m[1]);
-      const items = d['@type'] === 'ItemList' ? (d.itemListElement || []) : [];
+      const items = Array.isArray(d.itemListElement) ? d.itemListElement : [];
       for (const el of items) {
         const price = parseFloat(el?.offers?.price || el?.price || 0);
         if (price > 0.25 && price < 50000) {
@@ -505,7 +515,7 @@ async function lookupViaMainn(keywords) {
     } catch (e) {}
   }
 
-  // Fallback: data-price attributes and sale price elements
+  // Fallback: data-price attributes
   if (prices.length < 2) {
     for (const m of html.matchAll(/data-price="([\d.]+)"/g)) {
       const p = parseFloat(m[1]);
@@ -513,9 +523,9 @@ async function lookupViaMainn(keywords) {
     }
   }
 
-  // Last resort: dollar amounts in sale/price contexts
+  // Fallback: dollar amounts near "sold" context
   if (prices.length < 2) {
-    for (const m of html.matchAll(/class="[^"]*(?:price|sale|sold)[^"]*"[^>]*>\s*\$?\s*([\d,]+\.?\d{0,2})/gi)) {
+    for (const m of html.matchAll(/\$\s*([\d,]+\.\d{2})/g)) {
       const p = parseFloat(m[1].replace(/,/g, ''));
       if (p > 0.25 && p < 50000) prices.push(p);
     }
@@ -527,18 +537,7 @@ async function lookupViaMainn(keywords) {
 
 async function lookupVia130Point(keywords) {
   const url = 'https://130point.com/sales/?' + new URLSearchParams({ search: keywords });
-  const r = await fetch(url, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      'Accept-Language': 'en-US,en;q=0.9',
-      'Referer': 'https://130point.com/',
-    },
-    redirect: 'follow',
-  });
-  if (!r.ok) throw new Error(`130point returned ${r.status}`);
-  const html = await r.text();
-  if (html.length < 500) throw new Error('130point returned empty page');
+  const html = await proxiedFetch(url);
 
   const prices = [];
   for (const m of html.matchAll(/<td[^>]*>\s*\$\s*([\d,]+\.?\d{0,2})\s*<\/td>/g)) {

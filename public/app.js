@@ -332,18 +332,23 @@ async function openDetail(id) {
         ` : ''}
 
         ${(() => {
-          const searchQ = [card.player_name, card.year, card.brand, card.set_name,
-            card.card_number ? `#${card.card_number}` : '', card.parallel].filter(Boolean).join(' ');
-          const enc = encodeURIComponent(searchQ);
-          const encName = encodeURIComponent(card.player_name || '');
+          // Build clean keyword — avoid doubling brand in set name (e.g. "Leaf" + "Leaf HYPE!")
+          const { player_name, year, brand, set_name, card_number, parallel } = card;
+          const setLower = (set_name || '').toLowerCase();
+          const brandLower = (brand || '').toLowerCase();
+          const setPart = set_name && brand && setLower.startsWith(brandLower) ? set_name : [brand, set_name].filter(Boolean).join(' ');
+          const q = [player_name, year, setPart, parallel, card_number ? `#${card_number}` : ''].filter(Boolean).join(' ');
+          const enc = encodeURIComponent(q);
+          const encName = encodeURIComponent(player_name || '');
           return `
             <div class="detail-section">
               <p class="detail-section-title">Search Online</p>
+              <p class="detail-hint" style="margin-bottom:8px;font-size:11px">${esc(q)}</p>
               <div class="search-links">
-                <a class="search-link-btn" href="https://www.ebay.com/sch/i.html?_nkw=${enc}&LH_Complete=1&LH_Sold=1&_sop=13" target="_blank">eBay Sold</a>
+                <a class="search-link-btn" href="https://www.ebay.com/sch/212/i.html?_nkw=${enc}&LH_Complete=1&LH_Sold=1&_sop=13" target="_blank">eBay Sold</a>
+                <a class="search-link-btn" href="https://mavin.io/search?q=${enc}" target="_blank">Mavin</a>
                 <a class="search-link-btn" href="https://130point.com/sales/?search=${enc}" target="_blank">130point</a>
                 <a class="search-link-btn" href="https://www.comc.com/Cards?SearchQuery=${encName}" target="_blank">COMC</a>
-                <a class="search-link-btn" href="https://www.psacard.com/cardfacts/?search=${encName}" target="_blank">PSA</a>
               </div>
             </div>
           `;
