@@ -7,6 +7,7 @@ let currentFilter = 'All';
 let bulkMode = false;
 let scanQueue = []; // array of { file, preview, filename }
 let editingId = null;
+let editingBulkIndex = null;
 let currentImagePath = '';
 let cameraStream = null;
 let reviewCardData = null;
@@ -67,6 +68,24 @@ function openSettings() {
 
 function closeSettings() {
   document.getElementById('settings-modal').style.display = 'none';
+}
+
+async function saveGeminiKey() {
+  const apiKey = document.getElementById('gemini-key-input').value.trim();
+  if (!apiKey) return;
+  try {
+    const res = await fetch('/api/settings/gemini', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ apiKey })
+    });
+    if (res.ok) {
+      showToast('Gemini key saved! Card recognition is ready.', 'success');
+      document.getElementById('gemini-status').innerHTML = '<p style="color:var(--green)">✓ Saved — AI recognition ready</p>';
+    }
+  } catch (e) {
+    showToast('Failed to save key', 'error');
+  }
 }
 
 async function saveEbayId() {
@@ -286,9 +305,10 @@ async function deleteCard(id) {
 // ========== FORM ==========
 function resetForm() {
   editingId = null;
+  editingBulkIndex = null;
   currentImagePath = '';
   document.getElementById('form-title').textContent = 'Add Card';
-  document.getElementById('save-btn').textContent = 'Add to Vault';
+  document.getElementById('save-btn').textContent = 'Add to Collection';
   document.getElementById('form-image-preview').style.display = 'none';
 
   const fields = ['player_name', 'team', 'year', 'brand', 'card_number', 'set_name', 'subset', 'parallel', 'psa_grade', 'estimated_value', 'purchase_price', 'notes'];
@@ -338,13 +358,24 @@ async function saveCard() {
   if (!data.player_name) { showToast('Player name is required', 'error'); return; }
 
   try {
-    if (editingId) {
+    if (editingBulkIndex !== null) {
+      // Update in-memory bulk review card and return to review
+      bulkReviewCards[editingBulkIndex] = { ...bulkReviewCards[editingBulkIndex], ...data };
+      const idx = editingBulkIndex;
+      editingBulkIndex = null;
+      editingId = null;
+      showBulkReview(bulkReviewCards);
+      switchView('scan');
+      showToast(`Card ${idx + 1} updated`);
+    } else if (editingId) {
       await fetch(`/api/cards/${editingId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data)
       });
       showToast('Card updated!');
+      resetForm();
+      switchView('collection');
     } else {
       await fetch('/api/cards', {
         method: 'POST',
@@ -352,9 +383,9 @@ async function saveCard() {
         body: JSON.stringify(data)
       });
       showToast('Card added to collection!');
+      resetForm();
+      switchView('collection');
     }
-    resetForm();
-    switchView('collection');
   } catch (e) {
     showToast('Failed to save card', 'error');
   }
@@ -437,7 +468,6 @@ function resetScan() {
   document.getElementById('scan-start').style.display = 'grid';
   document.getElementById('camera-view').style.display = 'none';
   document.getElementById('scan-preview').style.display = 'none';
-  document.getElementById('scan-review-single').style.display = 'none';
   document.getElementById('scan-review-bulk').style.display = 'none';
   document.getElementById('bulk-more').style.display = bulkMode ? 'flex' : 'none';
   document.getElementById('file-input').multiple = bulkMode;
@@ -479,7 +509,7 @@ async function handleFileUpload(e) {
     try {
       const res = await fetch('/api/upload', { method: 'POST', body: formData });
       const result = await res.json();
-      openFormWithImage(result.path);
+      await recognizeCard(result.path);
     } catch (err) { showToast('Upload failed', 'error'); }
   }
 }
@@ -555,7 +585,7 @@ async function capturePhoto() {
       showScanPreview();
     } else {
       stopCamera();
-      openFormWithImage(result.path);
+      await recognizeCard(result.path);
     }
   } catch (e) {
     showToast('Capture failed', 'error');
@@ -565,7 +595,6 @@ async function capturePhoto() {
 function showScanPreview() {
   document.getElementById('scan-start').style.display = 'none';
   document.getElementById('camera-view').style.display = 'none';
-  document.getElementById('scan-review-single').style.display = 'none';
   document.getElementById('scan-review-bulk').style.display = 'none';
 
   const preview = document.getElementById('scan-preview');
@@ -600,28 +629,69 @@ function clearScans() {
 
 async function processScans() {
   if (!scanQueue.length) return;
-  // Build blank review cards — user fills details manually
-  bulkReviewCards = scanQueue.map(item => ({
-    image_path: item.path,
-    player_name: '', team: '', year: null, sport: 'Baseball',
-    brand: '', card_number: '', set_name: '', subset: '', parallel: '',
-    condition_grade: 'Near Mint', estimated_value: 0,
-  }));
-  showBulkReview(bulkReviewCards);
-}
 
-async function skipAI() {
-  // Save cards without AI — just the images
-  for (const item of scanQueue) {
-    await fetch('/api/cards', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ player_name: '', image_path: item.path })
-    });
+  let hasGemini = false;
+  try {
+    const s = await (await fetch('/api/settings')).json();
+    hasGemini = s.hasGeminiKey;
+  } catch (e) {}
+
+  if (!hasGemini) {
+    // No Gemini key — show blank review cards for manual entry
+    bulkReviewCards = scanQueue.map(item => ({
+      image_path: item.path, player_name: '', team: '', year: null,
+      sport: 'Baseball', brand: '', card_number: '', set_name: '',
+      subset: '', parallel: '', condition_grade: 'Near Mint', estimated_value: 0,
+    }));
+    showBulkReview(bulkReviewCards);
+    return;
   }
-  showToast(`${scanQueue.length} card(s) added — tap to edit details`, 'info');
-  resetScan();
-  switchView('collection');
+
+  showAI('Analyzing Cards...', `Processing ${scanQueue.length} card${scanQueue.length !== 1 ? 's' : ''}...`, 'Reading player, year, brand, parallel & more');
+
+  bulkReviewCards = [];
+  for (let i = 0; i < scanQueue.length; i++) {
+    const item = scanQueue[i];
+    const bar = document.getElementById('ai-progress');
+    if (bar) bar.style.width = `${(i / scanQueue.length) * 100}%`;
+    document.getElementById('ai-sub').textContent = `Card ${i + 1} of ${scanQueue.length}...`;
+
+    try {
+      const res = await fetch('/api/recognize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imagePath: item.path })
+      });
+      const card = await res.json();
+      bulkReviewCards.push({
+        image_path: item.path,
+        player_name: card.player_name || '',
+        team: card.team || '',
+        year: card.year || null,
+        sport: card.sport || 'Baseball',
+        brand: card.brand || '',
+        card_number: card.card_number || '',
+        set_name: card.set_name || '',
+        subset: card.subset || '',
+        parallel: card.parallel || '',
+        condition_grade: 'Near Mint',
+        estimated_value: 0,
+        is_rookie: card.is_rookie || false,
+        confidence: card.confidence || '',
+      });
+    } catch (e) {
+      bulkReviewCards.push({
+        image_path: item.path, player_name: '', team: '', year: null,
+        sport: 'Baseball', brand: '', card_number: '', set_name: '',
+        subset: '', parallel: '', condition_grade: 'Near Mint', estimated_value: 0,
+      });
+    }
+  }
+
+  const bar = document.getElementById('ai-progress');
+  if (bar) bar.style.width = '100%';
+  hideAI();
+  showBulkReview(bulkReviewCards);
 }
 
 // ========== STATS ==========
@@ -762,8 +832,80 @@ function openFormWithImage(imagePath) {
   document.getElementById('form-preview-img').src = imagePath;
   resetScan();
   switchView('add');
-  // Focus player name so dad can start typing immediately
   setTimeout(() => document.getElementById('f-player_name')?.focus(), 100);
+}
+
+async function recognizeCard(imagePath) {
+  let hasGemini = false;
+  try {
+    const s = await (await fetch('/api/settings')).json();
+    hasGemini = s.hasGeminiKey;
+  } catch (e) {}
+
+  if (!hasGemini) {
+    openFormWithImage(imagePath);
+    return;
+  }
+
+  showAI('Analyzing Card...', 'Reading player, year, brand, parallel...', 'Powered by Google Gemini (free)');
+
+  let progress = 0;
+  const ticker = setInterval(() => {
+    progress = Math.min(progress + 6, 88);
+    const bar = document.getElementById('ai-progress');
+    if (bar) bar.style.width = progress + '%';
+  }, 200);
+
+  try {
+    const res = await fetch('/api/recognize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ imagePath })
+    });
+    clearInterval(ticker);
+    const bar = document.getElementById('ai-progress');
+    if (bar) bar.style.width = '100%';
+
+    const card = await res.json();
+    hideAI();
+
+    if (card.error) {
+      showToast(card.error, 'error');
+      openFormWithImage(imagePath);
+      return;
+    }
+
+    openFormWithImage(imagePath);
+    // Fill after form resets (brief tick)
+    setTimeout(() => fillFormFromCard(card), 50);
+  } catch (e) {
+    clearInterval(ticker);
+    hideAI();
+    showToast('Recognition failed — fill in manually', 'error');
+    openFormWithImage(imagePath);
+  }
+}
+
+function fillFormFromCard(card) {
+  const set = (id, val) => {
+    const el = document.getElementById(id);
+    if (el && val != null && val !== '') el.value = val;
+  };
+  set('f-player_name', card.player_name);
+  set('f-team', card.team);
+  set('f-year', card.year);
+  set('f-brand', card.brand);
+  set('f-card_number', card.card_number);
+  set('f-set_name', card.set_name);
+  set('f-subset', card.subset);
+  set('f-parallel', card.parallel);
+  if (card.sport && ['Baseball', 'Football', 'Basketball'].includes(card.sport)) {
+    document.getElementById('f-sport').value = card.sport;
+  }
+  if (card.is_rookie) {
+    const notes = document.getElementById('f-notes');
+    if (notes && !notes.value) notes.value = 'Rookie Card';
+  }
 }
 
 function showBulkReview(cards) {
@@ -826,8 +968,35 @@ async function saveBulkCards() {
 function editBulkCard(index) {
   const card = bulkReviewCards[index];
   if (!card) return;
-  reviewCardData = card;
-  editReviewCard();
+
+  editingBulkIndex = index;
+  editingId = null;
+  currentImagePath = card.image_path || '';
+
+  document.getElementById('form-title').textContent = `Edit Card ${index + 1}`;
+  document.getElementById('save-btn').textContent = '✓ Save & Return to Review';
+
+  const fields = ['player_name', 'team', 'year', 'brand', 'card_number', 'set_name', 'subset', 'parallel', 'psa_grade', 'estimated_value', 'purchase_price', 'notes'];
+  fields.forEach(f => {
+    const el = document.getElementById(`f-${f}`);
+    if (el) el.value = card[f] != null ? card[f] : '';
+  });
+  if (card.sport && ['Baseball', 'Football', 'Basketball'].includes(card.sport)) {
+    document.getElementById('f-sport').value = card.sport;
+  }
+  if (card.condition_grade) document.getElementById('f-condition_grade').value = card.condition_grade;
+  document.getElementById('f-is_duplicate').checked = false;
+  document.getElementById('f-is_wishlist').checked = false;
+  document.getElementById('f-is_graded').checked = false;
+
+  if (card.image_path) {
+    document.getElementById('form-image-preview').style.display = 'block';
+    document.getElementById('form-preview-img').src = card.image_path;
+  } else {
+    document.getElementById('form-image-preview').style.display = 'none';
+  }
+
+  switchView('add');
 }
 
 // ========== UTILITY ==========
