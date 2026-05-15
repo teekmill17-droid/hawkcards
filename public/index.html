@@ -298,6 +298,16 @@
           <hr class="settings-divider">
 
           <div class="field full">
+            <label>🔍 Google Gemini Key <span class="settings-badge">Price Lookup</span></label>
+            <p class="field-help">Free — enables price lookup via Google Search (finds real eBay sold prices). Get a free key at <a href="https://aistudio.google.com/app/apikey" target="_blank">aistudio.google.com</a> → Create API Key. No credit card needed.</p>
+            <input type="text" id="gemini-key-input" placeholder="AIza...">
+          </div>
+          <div class="field full" id="gemini-status"></div>
+          <button class="btn-primary" onclick="saveGeminiKey()" style="margin-bottom:8px">Save Gemini Key</button>
+
+          <hr class="settings-divider">
+
+          <div class="field full">
             <label>🏷 eBay App ID <span class="settings-badge">Price Lookup</span></label>
             <p class="field-help">Free — shows real sold prices from eBay. Get one at <a href="https://developer.ebay.com" target="_blank">developer.ebay.com</a> → Create Account → My Keys → App ID (Production)</p>
             <input type="text" id="ebay-appid-input" placeholder="YourName-AppName-PRD-...">

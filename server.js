@@ -555,6 +555,52 @@ async function lookupViaSportsCardsPro(keywords) {
   return { prices, recentSales: recentSales.slice(0, 10), source: 'SportsCardsPro' };
 }
 
+async function lookupViaGeminiSearch(geminiKey, keywords) {
+  const prompt = `Search Google for recent eBay SOLD/completed listings for this sports card: "${keywords}"
+
+Find actual sale prices from the last 90 days. Return ONLY this JSON, no other text:
+{"prices":[12.50,15.00,11.25],"count":3}
+
+If you cannot find prices, return: {"prices":[],"count":0}`;
+
+  const r = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        tools: [{ google_search: {} }],
+        generationConfig: { temperature: 0.1, maxOutputTokens: 300 }
+      })
+    }
+  );
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}));
+    throw new Error(err?.error?.message || `Gemini search: ${r.status}`);
+  }
+  const data = await r.json();
+  const text = (data?.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('');
+
+  // Try clean JSON first
+  const m = text.match(/\{[^{}]*"prices"\s*:\s*\[[^\]]*\][^{}]*\}/);
+  if (m) {
+    const parsed = JSON.parse(m[0]);
+    const prices = (parsed.prices || []).map(Number).filter(p => p > 0 && p < 100000);
+    if (prices.length) return { prices, recentSales: [], source: 'eBay (Google Search)' };
+  }
+
+  // Fallback: extract dollar amounts from prose response
+  const priceMatches = [];
+  for (const pm of text.matchAll(/\$\s*([\d,]+\.?\d{0,2})/g)) {
+    const p = parseFloat(pm[1].replace(/,/g, ''));
+    if (p > 0.25 && p < 50000) priceMatches.push(p);
+  }
+  if (priceMatches.length >= 2) return { prices: priceMatches, recentSales: [], source: 'eBay (Google Search)' };
+
+  throw new Error('Gemini found no sold price data for this card');
+}
+
 async function lookupVia130Point(keywords) {
   const url = 'https://130point.com/sales/?' + new URLSearchParams({ search: keywords });
   const html = await proxiedFetch(url);
@@ -585,7 +631,9 @@ app.post('/api/ebay-price', async (req, res) => {
     if (appId) {
       result = await lookupViaFindingAPI(appId, keywords);
     } else {
+      const geminiKey = getGeminiKey();
       const sources = [
+        ...(geminiKey ? [{ name: 'Gemini', fn: () => lookupViaGeminiSearch(geminiKey, keywords) }] : []),
         { name: 'SportsCardsPro', fn: () => lookupViaSportsCardsPro(keywords) },
         { name: '130point', fn: () => lookupVia130Point(keywords) },
         { name: 'eBay', fn: () => lookupViaEbayScrape(keywords) },
@@ -627,16 +675,17 @@ app.post('/api/ebay-price', async (req, res) => {
   }
 });
 
-// Manual price set — user looked it up themselves and enters the value
+// Save a price result — used by both manual entry and client-side lookups
 app.post('/api/cards/:id/set-price', (req, res) => {
   const id = Number(req.params.id);
-  const { price, source } = req.body;
+  const { price, source, range_low, range_high, sales_count, recent_sales } = req.body;
   if (!price || isNaN(price)) return res.status(400).json({ error: 'Price required' });
   run('UPDATE cards SET estimated_value=?, lookup_source=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
     [price, source || 'Manual', id]);
   run(`INSERT INTO price_history (card_id, estimated_value, value_range_low, value_range_high, recent_sales_count, recent_sales_json, source)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [id, price, 0, 0, 0, '[]', source || 'Manual']);
+    [id, price, range_low || 0, range_high || 0, sales_count || 0,
+     JSON.stringify(recent_sales || []), source || 'Manual']);
   res.json(queryOne('SELECT * FROM cards WHERE id=?', [id]));
 });
 

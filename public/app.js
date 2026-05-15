@@ -568,6 +568,96 @@ async function saveCard() {
   }
 }
 
+// Build the same search query the server uses
+function buildKeywordsClient(card) {
+  const parts = [card.player_name, card.year];
+  const setLower = (card.set_name || '').toLowerCase();
+  const brandLower = (card.brand || '').toLowerCase();
+  if (card.set_name && card.brand && setLower.startsWith(brandLower)) {
+    parts.push(card.set_name);
+  } else {
+    if (card.brand) parts.push(card.brand);
+    if (card.set_name) parts.push(card.set_name);
+  }
+  if (card.parallel) parts.push(card.parallel);
+  if (card.card_number) parts.push(`#${card.card_number}`);
+  if (card.psa_grade) parts.push(`PSA ${card.psa_grade}`);
+  return parts.filter(Boolean).join(' ');
+}
+
+// Fetch price data from the browser (bypasses Railway's blocked datacenter IP).
+// Tries eBay sold listings via corsproxy.io (Cloudflare CDN — not IP-blocked by eBay),
+// then 130point via allorigins.win as a backup.
+async function lookupPriceClientSide(keywords) {
+  const ebayUrl = 'https://www.ebay.com/sch/212/i.html?' + new URLSearchParams({
+    _nkw: keywords, LH_Complete: '1', LH_Sold: '1', _sop: '13', _ipg: '20',
+  });
+  const point130Url = 'https://130point.com/sales/?' + new URLSearchParams({ search: keywords });
+
+  const attempts = [
+    { url: `https://corsproxy.io/?${encodeURIComponent(ebayUrl)}`, site: 'eBay' },
+    { url: `https://api.allorigins.win/raw?url=${encodeURIComponent(point130Url)}`, site: '130point' },
+    { url: `https://corsproxy.io/?${encodeURIComponent(point130Url)}`, site: '130point' },
+  ];
+
+  for (const { url: proxyUrl, site } of attempts) {
+    try {
+      const r = await fetch(proxyUrl, { signal: AbortSignal.timeout(12000) });
+      if (!r.ok) continue;
+      const html = await r.text();
+      if (html.length < 1500 || html.includes('GoDaddy') || html.includes('domain is for sale')) continue;
+
+      const prices = [];
+      const recentSales = [];
+
+      // JSON-LD schema (eBay)
+      for (const m of html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)) {
+        try {
+          const d = JSON.parse(m[1]);
+          for (const el of (d['@type'] === 'ItemList' ? d.itemListElement || [] : [])) {
+            const p = parseFloat(el.offers?.price || 0);
+            if (p > 0 && p < 100000) { prices.push(p); recentSales.push({ title: el.name || '', price: p, date: '', url: el.url || '' }); }
+          }
+        } catch (e) {}
+      }
+
+      // itemprop price (eBay)
+      if (!prices.length) {
+        for (const m of html.matchAll(/itemprop="price"[^>]*content="([\d.]+)"/g)) {
+          const p = parseFloat(m[1]); if (p > 0 && p < 100000) prices.push(p);
+        }
+      }
+
+      // s-item__price spans (eBay)
+      if (!prices.length) {
+        for (const m of html.matchAll(/class="s-item__price"[^>]*>\s*\$\s*([\d,]+\.?\d*)/g)) {
+          const p = parseFloat(m[1].replace(/,/g, '')); if (p > 0 && p < 100000) prices.push(p);
+        }
+      }
+
+      // Dollar amounts in <td> cells (130point)
+      if (!prices.length) {
+        for (const m of html.matchAll(/<td[^>]*>\s*\$\s*([\d,]+\.?\d{0,2})\s*<\/td>/g)) {
+          const p = parseFloat(m[1].replace(/,/g, '')); if (p > 0.25 && p < 50000) prices.push(p);
+        }
+      }
+
+      if (prices.length >= 2) {
+        const avg = prices.reduce((a, b) => a + b, 0) / prices.length;
+        return {
+          estimated_value: Math.round(avg * 100) / 100,
+          value_range_low: Math.min(...prices),
+          value_range_high: Math.max(...prices),
+          recent_sales_count: prices.length,
+          recent_sales: recentSales.slice(0, 10),
+          source: site === 'eBay' ? 'eBay Sold Listings' : '130point.com',
+        };
+      }
+    } catch (e) { /* try next */ }
+  }
+  throw new Error('client-side lookup failed');
+}
+
 async function lookupValue() {
   const data = getFormData();
   if (!data.player_name) { showToast('Enter a player name first', 'error'); return; }
@@ -575,42 +665,53 @@ async function lookupValue() {
   showAI('Looking up price...', 'Checking eBay sold listings...', 'Finding real recent sale prices');
 
   try {
-    const res = await fetch('/api/ebay-price', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data)
-    });
-    const result = await res.json();
+    // Try browser-side fetch first (bypasses Railway IP block)
+    let result;
+    try {
+      result = await lookupPriceClientSide(buildKeywordsClient(data));
+    } catch (e) {
+      // Fall back to server-side (which tries Gemini search, SportsCardsPro, etc.)
+      const res = await fetch('/api/ebay-price', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data)
+      });
+      result = await res.json();
+    }
     hideAI();
 
-    if (result.error) { showToast(result.error, 'error'); return; }
+    if (result.error) { showToast('Lookup blocked — use Search Online below, then Set Price manually', 'info'); return; }
 
     if (result.estimated_value > 0) {
       document.getElementById('f-estimated_value').value = result.estimated_value;
       const range = result.value_range_low && result.value_range_high
-        ? ` (range $${result.value_range_low}–$${result.value_range_high})`
+        ? ` ($${result.value_range_low}–$${result.value_range_high})`
         : '';
-      showToast(`eBay avg: $${result.estimated_value}${range} · ${result.recent_sales_count} sold`, 'success');
+      showToast(`${result.source}: $${result.estimated_value}${range} · ${result.recent_sales_count} sold`, 'success');
     } else {
       showToast(result.message || 'No recent eBay sales found', 'info');
     }
   } catch (e) {
     hideAI();
-    showToast('Lookup failed — check your connection or add eBay App ID in Settings', 'error');
+    showToast('Lookup failed — try adding a Gemini API key in Settings for reliable price search', 'info');
   }
 }
 
 async function lookupDetailValue(id) {
   const card = await (await fetch(`/api/cards/${id}`)).json();
-  showAI('Looking up price...', `Checking for ${card.player_name}...`, 'Trying SportsCardsPro, 130point, eBay...');
+  showAI('Looking up price...', `Checking for ${card.player_name}...`, 'Searching eBay sold listings...');
 
   try {
-    const res = await fetch('/api/ebay-price', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...card, card_id: id })
-    });
-    const result = await res.json();
+    // Try browser-side fetch first (bypasses Railway IP block)
+    let result;
+    try {
+      result = await lookupPriceClientSide(buildKeywordsClient(card));
+    } catch (e) {
+      // Fall back to server-side (which tries Gemini search, SportsCardsPro, etc.)
+      const res = await fetch('/api/ebay-price', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...card, card_id: id })
+      });
+      result = await res.json();
+    }
     hideAI();
 
     if (result.error) {
@@ -619,14 +720,22 @@ async function lookupDetailValue(id) {
     }
 
     if (result.estimated_value > 0) {
-      card.estimated_value = result.estimated_value;
-      card.lookup_source = result.source || 'eBay Sold Listings';
-      await fetch(`/api/cards/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(card)
+      // Save price via set-price endpoint (stores full history entry)
+      await fetch(`/api/cards/${id}/set-price`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          price: result.estimated_value,
+          source: result.source || 'eBay Sold Listings',
+          range_low: result.value_range_low,
+          range_high: result.value_range_high,
+          sales_count: result.recent_sales_count,
+          recent_sales: result.recent_sales,
+        })
       });
-      showToast(`${result.source}: $${result.estimated_value} · ${result.recent_sales_count} sold`, 'success');
+      const range = result.value_range_low && result.value_range_high
+        ? ` ($${result.value_range_low}–$${result.value_range_high})`
+        : '';
+      showToast(`${result.source}: $${result.estimated_value}${range} · ${result.recent_sales_count} sold`, 'success');
       loadCards();
       openDetail(id);
     } else {
@@ -634,7 +743,7 @@ async function lookupDetailValue(id) {
     }
   } catch (e) {
     hideAI();
-    showToast('Lookup failed', 'error');
+    showToast('Lookup failed — try adding a free Gemini key in Settings', 'info');
   }
 }
 
