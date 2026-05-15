@@ -825,21 +825,6 @@ body {
 .bulk-edit-btn:hover { background: var(--surface-3); }
 .bulk-review-actions { display: flex; gap: 10px; }
 
-/* ===== Search Online Links ===== */
-.search-links {
-  display: flex; flex-wrap: wrap; gap: 8px; margin-top: 2px;
-}
-.search-link-btn {
-  display: inline-block; padding: 7px 14px; border-radius: 8px;
-  border: 1px solid var(--border-2); background: var(--surface-2);
-  color: var(--text-2); font-size: 12px; font-weight: 600;
-  text-decoration: none; transition: all 0.15s;
-  font-family: 'Inter', sans-serif;
-}
-.search-link-btn:hover {
-  background: var(--surface-3); color: var(--accent); border-color: var(--accent-border);
-}
-
 /* ===== Form photo upload ===== */
 .form-img-actions {
   display: flex; gap: 8px; margin-top: 8px; align-items: center;
