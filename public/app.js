@@ -1100,13 +1100,12 @@ function showToast(msg, type = 'success') {
 // ========== SCAN REVIEW ==========
 
 function openFormWithImage(imagePath) {
-  resetForm();
+  resetScan();
+  switchView('add'); // calls resetForm() internally — must come before we set the image
   currentImagePath = imagePath;
   document.getElementById('form-image-preview').style.display = 'block';
   document.getElementById('form-preview-img').src = imagePath;
   document.getElementById('form-no-image').style.display = 'none';
-  resetScan();
-  switchView('add');
   setTimeout(() => document.getElementById('f-player_name')?.focus(), 100);
 }
 
