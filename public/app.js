@@ -395,7 +395,7 @@ async function lookupValue() {
   const data = getFormData();
   if (!data.player_name) { showToast('Enter a player name first', 'error'); return; }
 
-  showAI('Searching eBay...', 'Checking sold listings...', 'Finding real recent sale prices');
+  showAI('Looking up price...', 'Checking eBay sold listings...', 'Finding real recent sale prices');
 
   try {
     const res = await fetch('/api/ebay-price', {
@@ -419,7 +419,7 @@ async function lookupValue() {
     }
   } catch (e) {
     hideAI();
-    showToast('Lookup failed — add your eBay App ID in Settings', 'error');
+    showToast('Lookup failed — check your connection or add eBay App ID in Settings', 'error');
   }
 }
 
@@ -427,7 +427,7 @@ async function lookupDetailValue(id) {
   closeDetail();
   const card = await (await fetch(`/api/cards/${id}`)).json();
 
-  showAI('Searching eBay...', `Looking up ${card.player_name}...`, 'Finding real recent sale prices');
+  showAI('Looking up price...', `Checking eBay for ${card.player_name}...`, 'Finding real recent sale prices');
 
   try {
     const res = await fetch('/api/ebay-price', {

@@ -251,70 +251,146 @@ app.post('/api/upload/bulk', upload.array('images', 50), async (req, res) => {
   res.json(results);
 });
 
-// --- eBay Price Lookup (free Finding API) ---
-app.post('/api/ebay-price', async (req, res) => {
-  const appId = getEbayAppId();
-  if (!appId) return res.status(400).json({ error: 'eBay App ID not set. Go to Settings.' });
+// --- eBay Price Lookup ---
+// Uses official Finding API when App ID is set; falls back to scraping completed listings HTML
 
-  const { player_name, year, brand, set_name, card_number, parallel, sport, psa_grade } = req.body;
-  if (!player_name) return res.status(400).json({ error: 'Player name required' });
-
-  const keywords = [player_name, year, brand, set_name,
+function buildKeywords(card) {
+  const { player_name, year, brand, set_name, card_number, parallel, psa_grade } = card;
+  return [player_name, year, brand, set_name,
     card_number ? `#${card_number}` : '', parallel, psa_grade, 'card']
     .filter(Boolean).join(' ');
+}
+
+function calcStats(prices) {
+  if (!prices.length) return null;
+  const avg = prices.reduce((a, b) => a + b, 0) / prices.length;
+  return {
+    estimated_value: Math.round(avg * 100) / 100,
+    value_range_low: Math.round(Math.min(...prices) * 100) / 100,
+    value_range_high: Math.round(Math.max(...prices) * 100) / 100,
+    recent_sales_count: prices.length,
+  };
+}
+
+async function lookupViaFindingAPI(appId, keywords) {
+  const params = new URLSearchParams({
+    'OPERATION-NAME': 'findCompletedItems',
+    'SERVICE-VERSION': '1.0.0',
+    'SECURITY-APPNAME': appId,
+    'RESPONSE-DATA-FORMAT': 'JSON',
+    'keywords': keywords,
+    'itemFilter(0).name': 'SoldItemsOnly',
+    'itemFilter(0).value': 'true',
+    'sortOrder': 'EndTimeSoonest',
+    'paginationInput.entriesPerPage': '20',
+    'categoryId': '212',
+  });
+
+  const r = await fetch(`https://svcs.ebay.com/services/search/FindingService/v1?${params}`);
+  if (!r.ok) throw new Error(`eBay API error: ${r.status}`);
+  const data = await r.json();
+
+  const ack = data?.findCompletedItemsResponse?.[0]?.ack?.[0];
+  if (ack !== 'Success' && ack !== 'Warning') {
+    const msg = data?.findCompletedItemsResponse?.[0]?.errorMessage?.[0]?.error?.[0]?.message?.[0];
+    throw new Error(msg || 'eBay search failed — check your App ID');
+  }
+
+  const items = data?.findCompletedItemsResponse?.[0]?.searchResult?.[0]?.item || [];
+  const prices = items.map(i => parseFloat(i?.sellingStatus?.[0]?.currentPrice?.[0]?.__value__ || '0')).filter(p => p > 0);
+  const recentSales = items.slice(0, 10).map(i => ({
+    title: i.title?.[0] || '',
+    price: parseFloat(i.sellingStatus?.[0]?.currentPrice?.[0]?.__value__ || '0'),
+    date: i.listingInfo?.[0]?.endTime?.[0]?.slice(0, 10) || '',
+    url: i.viewItemURL?.[0] || '',
+  }));
+
+  return { prices, recentSales, source: 'eBay Sold Listings (API)' };
+}
+
+async function lookupViaEbayScrape(keywords) {
+  const url = 'https://www.ebay.com/sch/212/i.html?' + new URLSearchParams({
+    _nkw: keywords, LH_Complete: '1', LH_Sold: '1', _sop: '13', _ipg: '20',
+  });
+
+  const r = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.9',
+    }
+  });
+  if (!r.ok) throw new Error(`eBay returned ${r.status}`);
+  const html = await r.text();
+
+  if (html.length < 3000 || html.includes('g-recaptcha') || html.includes('_challenge')) {
+    throw new Error('eBay blocked the request — add an eBay App ID in Settings for reliable lookups');
+  }
+
+  const prices = [];
+  const recentSales = [];
+
+  // Strategy 1: JSON-LD schema markup (most reliable when present)
+  for (const m of html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)) {
+    try {
+      const d = JSON.parse(m[1]);
+      const elements = d['@type'] === 'ItemList' ? d.itemListElement || [] : [];
+      for (const el of elements) {
+        const price = parseFloat(el.offers?.price || 0);
+        if (price > 0 && price < 100000) {
+          prices.push(price);
+          recentSales.push({ title: el.name || '', price, date: '', url: el.url || '' });
+        }
+      }
+    } catch (e) {}
+  }
+
+  // Strategy 2: itemprop="price" content attributes
+  if (!prices.length) {
+    for (const m of html.matchAll(/itemprop="price"[^>]*content="([\d.]+)"/g)) {
+      const p = parseFloat(m[1]);
+      if (p > 0 && p < 100000) prices.push(p);
+    }
+    for (const m of html.matchAll(/content="([\d.]+)"[^>]*itemprop="price"/g)) {
+      const p = parseFloat(m[1]);
+      if (p > 0 && p < 100000) prices.push(p);
+    }
+  }
+
+  // Strategy 3: s-item__price spans
+  if (!prices.length) {
+    for (const m of html.matchAll(/class="s-item__price"[^>]*>\s*\$\s*([\d,]+\.?\d*)/g)) {
+      const p = parseFloat(m[1].replace(/,/g, ''));
+      if (p > 0 && p < 100000) prices.push(p);
+    }
+  }
+
+  if (!prices.length) throw new Error('No sold listings found on eBay');
+  return { prices, recentSales: recentSales.slice(0, 10), source: 'eBay Sold Listings' };
+}
+
+app.post('/api/ebay-price', async (req, res) => {
+  const { player_name } = req.body;
+  if (!player_name) return res.status(400).json({ error: 'Player name required' });
+
+  const keywords = buildKeywords(req.body);
+  const appId = getEbayAppId();
 
   try {
-    const params = new URLSearchParams({
-      'OPERATION-NAME': 'findCompletedItems',
-      'SERVICE-VERSION': '1.0.0',
-      'SECURITY-APPNAME': appId,
-      'RESPONSE-DATA-FORMAT': 'JSON',
-      'keywords': keywords,
-      'itemFilter(0).name': 'SoldItemsOnly',
-      'itemFilter(0).value': 'true',
-      'sortOrder': 'EndTimeSoonest',
-      'paginationInput.entriesPerPage': '20',
-      'categoryId': '212', // Sports Trading Cards
-    });
-
-    const ebayRes = await fetch(`https://svcs.ebay.com/services/search/FindingService/v1?${params}`);
-    if (!ebayRes.ok) throw new Error(`eBay API error: ${ebayRes.status}`);
-    const data = await ebayRes.json();
-
-    const ack = data?.findCompletedItemsResponse?.[0]?.ack?.[0];
-    if (ack !== 'Success' && ack !== 'Warning') {
-      const msg = data?.findCompletedItemsResponse?.[0]?.errorMessage?.[0]?.error?.[0]?.message?.[0];
-      return res.status(400).json({ error: msg || 'eBay search failed — check your App ID' });
+    let result;
+    if (appId) {
+      result = await lookupViaFindingAPI(appId, keywords);
+    } else {
+      result = await lookupViaEbayScrape(keywords);
     }
 
-    const items = data?.findCompletedItemsResponse?.[0]?.searchResult?.[0]?.item || [];
-    if (!items.length) return res.json({ estimated_value: 0, recent_sales_count: 0, message: 'No recent eBay sales found' });
+    const { prices, recentSales, source } = result;
+    if (!prices.length) return res.json({ estimated_value: 0, recent_sales_count: 0, message: 'No recent eBay sales found' });
 
-    const prices = items
-      .map(i => parseFloat(i?.sellingStatus?.[0]?.currentPrice?.[0]?.__value__ || '0'))
-      .filter(p => p > 0);
-
-    if (!prices.length) return res.json({ estimated_value: 0, recent_sales_count: 0 });
-
-    const avg = prices.reduce((a, b) => a + b, 0) / prices.length;
-
-    const recentSales = items.slice(0, 8).map(i => ({
-      title: i.title?.[0] || '',
-      price: parseFloat(i.sellingStatus?.[0]?.currentPrice?.[0]?.__value__ || '0'),
-      date: i.listingInfo?.[0]?.endTime?.[0]?.slice(0, 10) || '',
-      url: i.viewItemURL?.[0] || '',
-    }));
-
-    res.json({
-      estimated_value: Math.round(avg * 100) / 100,
-      value_range_low: Math.round(Math.min(...prices) * 100) / 100,
-      value_range_high: Math.round(Math.max(...prices) * 100) / 100,
-      recent_sales_count: prices.length,
-      recent_sales: recentSales,
-      source: 'eBay Sold Listings',
-    });
+    const stats = calcStats(prices);
+    res.json({ ...stats, recent_sales: recentSales, source });
   } catch (e) {
-    console.error('eBay price error:', e);
+    console.error('eBay price error:', e.message);
     res.status(500).json({ error: e.message });
   }
 });
