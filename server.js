@@ -18,6 +18,11 @@ function getEbayAppId() {
   return process.env.EBAY_APP_ID || (row ? row.value : null);
 }
 
+function getAnthropicKey() {
+  const row = queryOne("SELECT value FROM settings WHERE key = 'anthropic_api_key'");
+  return process.env.ANTHROPIC_API_KEY || (row ? row.value : null);
+}
+
 function getGroqKey() {
   const row = queryOne("SELECT value FROM settings WHERE key = 'groq_api_key'");
   return process.env.GROQ_API_KEY || (row ? row.value : null);
@@ -55,9 +60,10 @@ const upload = multer({ storage, limits: { fileSize: 20 * 1024 * 1024 } });
 app.get('/api/settings', (req, res) => {
   res.json({
     hasEbayAppId: !!getEbayAppId(),
-    hasGeminiKey: !!getGeminiKey(),
+    hasAnthropicKey: !!getAnthropicKey(),
     hasGroqKey: !!getGroqKey(),
-    hasAiKey: !!(getGroqKey() || getGeminiKey()),
+    hasGeminiKey: !!getGeminiKey(),
+    hasAiKey: !!(getAnthropicKey() || getGroqKey() || getGeminiKey()),
   });
 });
 
@@ -72,6 +78,13 @@ app.post('/api/settings/gemini', (req, res) => {
   const { apiKey } = req.body;
   if (!apiKey) return res.status(400).json({ error: 'API key required' });
   run("INSERT OR REPLACE INTO settings (key, value) VALUES ('gemini_api_key', ?)", [apiKey]);
+  res.json({ success: true });
+});
+
+app.post('/api/settings/anthropic', (req, res) => {
+  const { apiKey } = req.body;
+  if (!apiKey) return res.status(400).json({ error: 'API key required' });
+  run("INSERT OR REPLACE INTO settings (key, value) VALUES ('anthropic_api_key', ?)", [apiKey]);
   res.json({ success: true });
 });
 
@@ -128,6 +141,31 @@ Return this exact JSON structure:
 
 Be as specific as possible. Do not guess — use null for anything genuinely not visible. confidence = "high" if you can read the card clearly, "medium" if partially visible, "low" if very unclear.`;
 
+async function recognizeWithClaude(apiKey, base64, mimeType) {
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 512,
+      messages: [{ role: 'user', content: [
+        { type: 'image', source: { type: 'base64', media_type: mimeType, data: base64 } },
+        { type: 'text', text: CARD_PROMPT }
+      ]}]
+    })
+  });
+  if (!r.ok) {
+    const err = await r.json();
+    throw new Error(err?.error?.message || `Claude error: ${r.status}`);
+  }
+  const data = await r.json();
+  return data?.content?.[0]?.text || '';
+}
+
 async function recognizeWithGroq(apiKey, base64, mimeType) {
   const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
@@ -174,10 +212,11 @@ async function recognizeWithGemini(apiKey, base64, mimeType) {
 }
 
 app.post('/api/recognize', async (req, res) => {
+  const anthropicKey = getAnthropicKey();
   const groqKey = getGroqKey();
   const geminiKey = getGeminiKey();
-  if (!groqKey && !geminiKey) {
-    return res.status(400).json({ error: 'No AI key set. Add a Groq key in Settings (free at console.groq.com).' });
+  if (!anthropicKey && !groqKey && !geminiKey) {
+    return res.status(400).json({ error: 'No AI key set. Add a Claude key in Settings (console.anthropic.com).' });
   }
 
   const { imagePath } = req.body;
@@ -191,9 +230,11 @@ app.post('/api/recognize', async (req, res) => {
   const mimeType = path.extname(filePath).toLowerCase() === '.png' ? 'image/png' : 'image/jpeg';
 
   try {
-    const text = groqKey
-      ? await recognizeWithGroq(groqKey, base64, mimeType)
-      : await recognizeWithGemini(geminiKey, base64, mimeType);
+    const text = anthropicKey
+      ? await recognizeWithClaude(anthropicKey, base64, mimeType)
+      : groqKey
+        ? await recognizeWithGroq(groqKey, base64, mimeType)
+        : await recognizeWithGemini(geminiKey, base64, mimeType);
 
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) return res.status(400).json({ error: 'Could not parse card data from image' });

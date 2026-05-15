@@ -70,6 +70,24 @@ function closeSettings() {
   document.getElementById('settings-modal').style.display = 'none';
 }
 
+async function saveAnthropicKey() {
+  const apiKey = document.getElementById('anthropic-key-input').value.trim();
+  if (!apiKey) return;
+  try {
+    const res = await fetch('/api/settings/anthropic', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ apiKey })
+    });
+    if (res.ok) {
+      showToast('Claude key saved! Card recognition ready.', 'success');
+      document.getElementById('anthropic-status').innerHTML = '<p style="color:var(--green)">✓ Saved — using Claude Haiku (~$0.002/scan)</p>';
+    }
+  } catch (e) {
+    showToast('Failed to save key', 'error');
+  }
+}
+
 async function saveGroqKey() {
   const apiKey = document.getElementById('groq-key-input').value.trim();
   if (!apiKey) return;
