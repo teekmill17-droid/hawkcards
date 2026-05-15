@@ -85,8 +85,29 @@ app.post('/api/settings/groq', (req, res) => {
 // --- AI Card Recognition ---
 // Prefers Groq (free, fast, reliable). Falls back to Gemini if Groq key not set.
 
-const CARD_PROMPT = `You are a sports trading card expert. Analyze this card image and extract every visible detail. Return ONLY a valid JSON object — no markdown, no explanation, just JSON.
+const CARD_PROMPT = `You are an expert sports card grader and cataloger with 20+ years of experience. Study every part of this card image very carefully — zoom in mentally on all text, logos, and design elements. Return ONLY a valid JSON object with no markdown fences, no explanation text.
 
+WHAT TO LOOK FOR ON THE CARD:
+- Player name: usually large text on front
+- Year: often embedded in the set name at the bottom edge (e.g. "2021 Topps Chrome") or printed on card
+- Brand/Manufacturer: Topps, Panini, Upper Deck, Bowman, Fleer, Donruss, Score, Leaf, SP, O-Pee-Chee, Stadium Club, Select, Mosaic, Optic, Chronicles, National Treasures, Certified, Immaculate
+- Card number: look in ALL corners and on the back — usually formatted as #500 or 500/550; check bottom corners carefully
+- Set name: the full product name, usually at bottom edge — e.g. "2021 Topps Chrome", "2022 Panini Prizm", "2023 Bowman Draft"
+- Subset/Insert: any insert name like "All-Stars", "Future Stars", "Silver Sluggers", "Rated Rookie", "1st Edition"
+- Parallel: the card's finish/variation — look for color borders, shimmer, foil patterns:
+    Prizm: Silver (base prizm), Gold /10, Red /149, Blue /199, Purple /49, Green /75, Holo, Disco
+    Chrome: Refractor (base), Gold Refractor /50, Blue Refractor /150, Red Refractor /5, SuperFractor /1
+    Other: Gold, Rainbow Foil, Color Match, Tiger Stripe, Camo, Neon, Cracked Ice, Logoman
+    If it's a plain base card with no special finish, use null
+- Print run: numbered cards show "/150" or "12/50" etc. — include in parallel field e.g. "Gold /50"
+- Sport: Baseball, Football, or Basketball
+- Team: team name or city
+- is_rookie: true ONLY if you see "RC", "Rookie", or "Rookie Card" text anywhere on the card
+- is_autograph: true if there is a visible signature on the card
+- is_patch: true if there is a jersey/patch piece embedded in the card
+- condition_notes: visible creases, corners worn, surface scratches, centering issues — be specific
+
+Return this exact JSON structure:
 {
   "player_name": "First Last",
   "team": "Team Name",
@@ -95,28 +116,24 @@ const CARD_PROMPT = `You are a sports trading card expert. Analyze this card ima
   "brand": "Topps",
   "card_number": "500",
   "set_name": "2021 Topps Chrome",
-  "subset": "insert or subset name, or null",
-  "parallel": "e.g. Prizm Silver, Gold Refractor, Blue /150, or null if base",
+  "subset": null,
+  "parallel": "Prizm Silver",
+  "print_run": null,
   "is_rookie": false,
-  "condition_notes": "any visible damage or wear, or null",
+  "is_autograph": false,
+  "is_patch": false,
+  "condition_notes": null,
   "confidence": "high"
 }
 
-Rules:
-- sport: exactly "Baseball", "Football", or "Basketball"
-- brand examples: Topps, Panini, Upper Deck, Bowman, Fleer, Donruss, Score, Leaf
-- set_name: full set name e.g. "2021 Topps Chrome", "2022 Panini Prizm"
-- parallel: be specific — "Prizm Silver", "Prizm Gold", "Prizm Holo", "Refractor", "Blue Refractor /150", "Gold /50". Use null if standard base card
-- is_rookie: true only if the card explicitly says RC, Rookie, or Rookie Card
-- confidence: "high" if clearly readable, "medium" if partially visible, "low" if unclear
-- Use null for any field you cannot determine from the image`;
+Be as specific as possible. Do not guess — use null for anything genuinely not visible. confidence = "high" if you can read the card clearly, "medium" if partially visible, "low" if very unclear.`;
 
 async function recognizeWithGroq(apiKey, base64, mimeType) {
   const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+      model: 'meta-llama/llama-4-maverick-17b-128e-instruct',
       messages: [{ role: 'user', content: [
         { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}` } },
         { type: 'text', text: CARD_PROMPT }
