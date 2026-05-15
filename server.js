@@ -6,24 +6,16 @@ const https = require('https');
 
 const os = require('os');
 const { initDB, query, queryOne, run } = require('./database');
-const Anthropic = require('@anthropic-ai/sdk').default;
-
 // Try to load sharp (optional — for image compression)
 let sharp = null;
-try { sharp = require('sharp'); } catch (e) { /* sharp not available, images won't be compressed */ }
+try { sharp = require('sharp'); } catch (e) { /* sharp not available */ }
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-let anthropic = null;
-function getAI() {
-  if (!anthropic) {
-    const row = queryOne("SELECT value FROM settings WHERE key = 'api_key'");
-    const key = process.env.ANTHROPIC_API_KEY || (row ? row.value : null);
-    if (!key) return null;
-    anthropic = new Anthropic({ apiKey: key });
-  }
-  return anthropic;
+function getEbayAppId() {
+  const row = queryOne("SELECT value FROM settings WHERE key = 'ebay_app_id'");
+  return process.env.EBAY_APP_ID || (row ? row.value : null);
 }
 
 // Middleware
@@ -51,15 +43,13 @@ const upload = multer({ storage, limits: { fileSize: 20 * 1024 * 1024 } });
 
 // --- Settings ---
 app.get('/api/settings', (req, res) => {
-  const row = queryOne("SELECT value FROM settings WHERE key = 'api_key'");
-  res.json({ hasApiKey: !!(row && row.value) });
+  res.json({ hasEbayAppId: !!getEbayAppId() });
 });
 
-app.post('/api/settings/apikey', (req, res) => {
-  const { apiKey } = req.body;
-  if (!apiKey) return res.status(400).json({ error: 'API key required' });
-  run("INSERT OR REPLACE INTO settings (key, value) VALUES ('api_key', ?)", [apiKey]);
-  anthropic = null;
+app.post('/api/settings/ebay', (req, res) => {
+  const { appId } = req.body;
+  if (!appId) return res.status(400).json({ error: 'App ID required' });
+  run("INSERT OR REPLACE INTO settings (key, value) VALUES ('ebay_app_id', ?)", [appId]);
   res.json({ success: true });
 });
 
@@ -172,143 +162,72 @@ app.post('/api/upload/bulk', upload.array('images', 50), async (req, res) => {
   res.json(results);
 });
 
-// --- AI Card Recognition ---
-app.post('/api/recognize', async (req, res) => {
-  const ai = getAI();
-  if (!ai) return res.status(400).json({ error: 'API key not set. Go to Settings.' });
+// --- eBay Price Lookup (free Finding API) ---
+app.post('/api/ebay-price', async (req, res) => {
+  const appId = getEbayAppId();
+  if (!appId) return res.status(400).json({ error: 'eBay App ID not set. Go to Settings.' });
 
-  const { imagePath } = req.body;
-  if (!imagePath) return res.status(400).json({ error: 'Image path required' });
+  const { player_name, year, brand, set_name, card_number, parallel, sport, psa_grade } = req.body;
+  if (!player_name) return res.status(400).json({ error: 'Player name required' });
+
+  const keywords = [player_name, year, brand, set_name,
+    card_number ? `#${card_number}` : '', parallel, psa_grade, 'card']
+    .filter(Boolean).join(' ');
 
   try {
-    const fname = imagePath.replace('/uploads/', '');
-    const fullPath = path.join(uploadsDir, fname);
-    if (!fs.existsSync(fullPath)) return res.status(404).json({ error: 'Image not found' });
-
-    const imageData = fs.readFileSync(fullPath).toString('base64');
-    const ext = path.extname(fullPath).toLowerCase();
-    const mediaType = ext === '.png' ? 'image/png' : 'image/jpeg';
-
-    // Step 1: Visual recognition
-    const recognition = await ai.messages.create({
-      model: 'claude-sonnet-4-20250514', max_tokens: 1500,
-      messages: [{ role: 'user', content: [
-        { type: 'image', source: { type: 'base64', media_type: mediaType, data: imageData } },
-        { type: 'text', text: `You are a sports card expert. Analyze this trading card carefully. Look for:
-- Player name, Team name/logo, Card year/season
-- Brand (Topps, Panini, Upper Deck, Bowman, Donruss, Fleer, Score, etc.)
-- Card number (front corner or back), Set name (e.g. "Topps Chrome", "Prizm", "Select")
-- Subset/insert name, Parallel type (refractor, prizm, holo, colored border)
-- Sport (Baseball/Football/Basketball), Rookie card indicators
-- Condition issues (creases, corner wear, centering)
-
-Return ONLY a JSON object, no markdown:
-{"player_name":"","team":"","year":null,"sport":"Baseball","brand":"","card_number":"","set_name":"","subset":"","parallel":"","is_rookie":false,"condition_grade":"Near Mint","confidence":"high"}` }
-      ]}]
+    const params = new URLSearchParams({
+      'OPERATION-NAME': 'findCompletedItems',
+      'SERVICE-VERSION': '1.0.0',
+      'SECURITY-APPNAME': appId,
+      'RESPONSE-DATA-FORMAT': 'JSON',
+      'keywords': keywords,
+      'itemFilter(0).name': 'SoldItemsOnly',
+      'itemFilter(0).value': 'true',
+      'sortOrder': 'EndTimeSoonest',
+      'paginationInput.entriesPerPage': '20',
+      'categoryId': '212', // Sports Trading Cards
     });
 
-    const recText = recognition.content.map(b => b.text || '').join('');
-    let cardData;
-    try { cardData = JSON.parse(recText.replace(/```json|```/g, '').trim()); }
-    catch { return res.status(500).json({ error: 'AI parse failed', raw: recText }); }
+    const ebayRes = await fetch(`https://svcs.ebay.com/services/search/FindingService/v1?${params}`);
+    if (!ebayRes.ok) throw new Error(`eBay API error: ${ebayRes.status}`);
+    const data = await ebayRes.json();
 
-    // Step 2: Value lookup via web search
-    let lookupData = null;
-    if (cardData.player_name) {
-      try {
-        const q = [cardData.player_name, cardData.year, cardData.brand, cardData.set_name,
-          cardData.card_number ? `#${cardData.card_number}` : '', cardData.parallel,
-          'sports card value price'].filter(Boolean).join(' ');
-
-        const lookup = await ai.messages.create({
-          model: 'claude-sonnet-4-20250514', max_tokens: 1000,
-          tools: [{ type: 'web_search_20250305', name: 'web_search' }],
-          messages: [{ role: 'user', content: `Search eBay COMPLETED/SOLD listings for this sports card: ${q}
-
-Find real recent sale prices (not active listings). Look for sold listings from the last 90 days.
-Calculate an average from the most recent sales.
-Return ONLY this JSON (no markdown):
-{"estimated_value":0,"value_range_low":0,"value_range_high":0,"recent_sales_count":0,"recent_sales_summary":"","source":"eBay Sold Listings"}` }]
-        });
-
-        const lt = lookup.content.map(b => b.text || '').join('');
-        try { lookupData = JSON.parse(lt.replace(/```json|```/g, '').trim()); }
-        catch { const m = lt.match(/\{[\s\S]*\}/); if (m) try { lookupData = JSON.parse(m[0]); } catch {} }
-      } catch (e) { console.error('Lookup error:', e.message); }
+    const ack = data?.findCompletedItemsResponse?.[0]?.ack?.[0];
+    if (ack !== 'Success' && ack !== 'Warning') {
+      const msg = data?.findCompletedItemsResponse?.[0]?.errorMessage?.[0]?.error?.[0]?.message?.[0];
+      return res.status(400).json({ error: msg || 'eBay search failed — check your App ID' });
     }
+
+    const items = data?.findCompletedItemsResponse?.[0]?.searchResult?.[0]?.item || [];
+    if (!items.length) return res.json({ estimated_value: 0, recent_sales_count: 0, message: 'No recent eBay sales found' });
+
+    const prices = items
+      .map(i => parseFloat(i?.sellingStatus?.[0]?.currentPrice?.[0]?.__value__ || '0'))
+      .filter(p => p > 0);
+
+    if (!prices.length) return res.json({ estimated_value: 0, recent_sales_count: 0 });
+
+    const avg = prices.reduce((a, b) => a + b, 0) / prices.length;
+
+    const recentSales = items.slice(0, 8).map(i => ({
+      title: i.title?.[0] || '',
+      price: parseFloat(i.sellingStatus?.[0]?.currentPrice?.[0]?.__value__ || '0'),
+      date: i.listingInfo?.[0]?.endTime?.[0]?.slice(0, 10) || '',
+      url: i.viewItemURL?.[0] || '',
+    }));
 
     res.json({
-      ...cardData,
-      estimated_value: lookupData?.estimated_value || 0,
-      lookup_source: lookupData?.source || '',
-      notable_details: lookupData?.notable_details || '',
+      estimated_value: Math.round(avg * 100) / 100,
+      value_range_low: Math.round(Math.min(...prices) * 100) / 100,
+      value_range_high: Math.round(Math.max(...prices) * 100) / 100,
+      recent_sales_count: prices.length,
+      recent_sales: recentSales,
+      source: 'eBay Sold Listings',
     });
   } catch (e) {
-    console.error('Recognition error:', e);
+    console.error('eBay price error:', e);
     res.status(500).json({ error: e.message });
   }
-});
-
-// Bulk recognize
-app.post('/api/recognize/bulk', async (req, res) => {
-  const ai = getAI();
-  if (!ai) return res.status(400).json({ error: 'API key not set' });
-  const { images } = req.body;
-  if (!images?.length) return res.status(400).json({ error: 'No images' });
-
-  const results = [];
-  for (const img of images) {
-    try {
-      const fname = img.imagePath.replace('/uploads/', '');
-      const fullPath = path.join(uploadsDir, fname);
-      if (!fs.existsSync(fullPath)) { results.push({ tempId: img.tempId, error: 'Not found' }); continue; }
-
-      const imageData = fs.readFileSync(fullPath).toString('base64');
-      const ext = path.extname(fullPath).toLowerCase();
-      const mediaType = ext === '.png' ? 'image/png' : 'image/jpeg';
-
-      const rec = await ai.messages.create({
-        model: 'claude-sonnet-4-20250514', max_tokens: 1500,
-        messages: [{ role: 'user', content: [
-          { type: 'image', source: { type: 'base64', media_type: mediaType, data: imageData } },
-          { type: 'text', text: `Sports card expert: analyze this card. Return ONLY JSON:
-{"player_name":"","team":"","year":null,"sport":"Baseball","brand":"","card_number":"","set_name":"","subset":"","parallel":"","is_rookie":false,"condition_grade":"Near Mint","confidence":"high"}` }
-        ]}]
-      });
-
-      const t = rec.content.map(b => b.text || '').join('');
-      const data = JSON.parse(t.replace(/```json|```/g, '').trim());
-      results.push({ tempId: img.tempId, ...data });
-    } catch (e) {
-      results.push({ tempId: img.tempId, error: e.message, player_name: '', sport: 'Baseball' });
-    }
-  }
-  res.json(results);
-});
-
-// --- Value Lookup ---
-app.post('/api/lookup', async (req, res) => {
-  const ai = getAI();
-  if (!ai) return res.status(400).json({ error: 'API key not set' });
-  const { player_name, year, brand, set_name, card_number, parallel, sport } = req.body;
-  const q = [player_name, year, brand, set_name, card_number ? `#${card_number}` : '', parallel, sport, 'card value'].filter(Boolean).join(' ');
-
-  try {
-    const lookup = await ai.messages.create({
-      model: 'claude-sonnet-4-20250514', max_tokens: 1200,
-      tools: [{ type: 'web_search_20250305', name: 'web_search' }],
-      messages: [{ role: 'user', content: `Search eBay COMPLETED/SOLD listings for this sports card: ${q}
-
-Find real recent sale prices from eBay sold listings in the last 90 days (not active/asking prices).
-Return ONLY this JSON (no markdown):
-{"estimated_value":0,"value_range_low":0,"value_range_high":0,"recent_sales_count":0,"recent_sales_summary":"","notable_info":"","sources":"eBay Sold Listings"}` }]
-    });
-    const text = lookup.content.map(b => b.text || '').join('');
-    let data;
-    try { data = JSON.parse(text.replace(/```json|```/g, '').trim()); }
-    catch { const m = text.match(/\{[\s\S]*\}/); data = m ? JSON.parse(m[0]) : { error: 'Parse failed' }; }
-    res.json(data);
-  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // --- CSV Export ---

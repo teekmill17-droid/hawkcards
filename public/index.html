@@ -290,12 +290,12 @@
         <h2 class="section-title">Settings</h2>
         <div class="settings-form">
           <div class="field full">
-            <label>Anthropic API Key</label>
-            <p class="field-help">Required for AI card recognition and value lookup. Get one at <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a></p>
-            <input type="password" id="api-key-input" placeholder="sk-ant-...">
+            <label>eBay App ID</label>
+            <p class="field-help">Free — required for eBay price lookups. Get one at <a href="https://developer.ebay.com" target="_blank">developer.ebay.com</a> → Create Account → My Keys → App ID (Production)</p>
+            <input type="text" id="ebay-appid-input" placeholder="YourName-AppName-PRD-...">
           </div>
           <div class="field full" id="api-status"></div>
-          <button class="btn-primary" onclick="saveApiKey()">Save Key</button>
+          <button class="btn-primary" onclick="saveEbayId()">Save App ID</button>
         </div>
       </div>
     </div>
