@@ -271,6 +271,7 @@ async function openDetail(id) {
           <div class="detail-actions">
             <button class="detail-btn" onclick="editCard(${card.id})">✏️ Edit</button>
             <button class="detail-btn accent" onclick="lookupDetailValue(${card.id})">🔍 Lookup Price</button>
+            <button class="detail-btn" onclick="setManualPrice(${card.id})">💲 Set Price</button>
             <button class="detail-btn" onclick="toggleDupe(${card.id}, ${card.is_duplicate})">${card.is_duplicate ? '✅ Undupe' : '🔁 Mark Dupe'}</button>
             <button class="detail-btn danger" onclick="deleteCard(${card.id})">🗑 Delete</button>
           </div>
@@ -346,7 +347,7 @@ async function openDetail(id) {
               <p class="detail-hint" style="margin-bottom:8px;font-size:11px">${esc(q)}</p>
               <div class="search-links">
                 <a class="search-link-btn" href="https://www.ebay.com/sch/212/i.html?_nkw=${enc}&LH_Complete=1&LH_Sold=1&_sop=13" target="_blank">eBay Sold</a>
-                <a class="search-link-btn" href="https://mavin.io/search?q=${enc}" target="_blank">Mavin</a>
+                <a class="search-link-btn" href="https://sportscardspro.com/search?q=${enc}" target="_blank">SportsCardsPro</a>
                 <a class="search-link-btn" href="https://130point.com/sales/?search=${enc}" target="_blank">130point</a>
                 <a class="search-link-btn" href="https://www.comc.com/Cards?SearchQuery=${encName}" target="_blank">COMC</a>
               </div>
@@ -601,7 +602,7 @@ async function lookupValue() {
 
 async function lookupDetailValue(id) {
   const card = await (await fetch(`/api/cards/${id}`)).json();
-  showAI('Looking up price...', `Checking eBay for ${card.player_name}...`, 'Finding real recent sale prices');
+  showAI('Looking up price...', `Checking for ${card.player_name}...`, 'Trying SportsCardsPro, 130point, eBay...');
 
   try {
     const res = await fetch('/api/ebay-price', {
@@ -612,7 +613,10 @@ async function lookupDetailValue(id) {
     const result = await res.json();
     hideAI();
 
-    if (result.error) { showToast(result.error, 'error'); return; }
+    if (result.error) {
+      showToast('Auto lookup blocked — use Search Online links below, then tap Set Price', 'info');
+      return;
+    }
 
     if (result.estimated_value > 0) {
       card.estimated_value = result.estimated_value;
@@ -622,15 +626,34 @@ async function lookupDetailValue(id) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(card)
       });
-      showToast(`eBay avg: $${result.estimated_value} · ${result.recent_sales_count} sold`, 'success');
+      showToast(`${result.source}: $${result.estimated_value} · ${result.recent_sales_count} sold`, 'success');
       loadCards();
       openDetail(id);
     } else {
-      showToast(result.message || 'No recent eBay sales found', 'info');
+      showToast(result.message || 'No sales found', 'info');
     }
   } catch (e) {
     hideAI();
-    showToast('Lookup failed — add your eBay App ID in Settings', 'error');
+    showToast('Lookup failed', 'error');
+  }
+}
+
+async function setManualPrice(id) {
+  const val = prompt('Enter the price you found (e.g. 12.50):');
+  if (!val) return;
+  const price = parseFloat(val);
+  if (isNaN(price) || price <= 0) { showToast('Invalid price', 'error'); return; }
+  try {
+    await fetch(`/api/cards/${id}/set-price`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ price, source: 'Manual' })
+    });
+    showToast(`Price set to $${price.toFixed(2)}`, 'success');
+    loadCards();
+    openDetail(id);
+  } catch (e) {
+    showToast('Failed to set price', 'error');
   }
 }
 
