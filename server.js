@@ -98,48 +98,45 @@ app.post('/api/settings/groq', (req, res) => {
 // --- AI Card Recognition ---
 // Prefers Groq (free, fast, reliable). Falls back to Gemini if Groq key not set.
 
-const CARD_PROMPT = `You are an expert sports card grader and cataloger with 20+ years of experience. Study every part of this card image very carefully — zoom in mentally on all text, logos, and design elements. Return ONLY a valid JSON object with no markdown fences, no explanation text.
+const CARD_PROMPT = `You are a professional sports card authenticator. Analyze this card image with extreme attention to detail. Return ONLY raw JSON — no markdown, no backticks, no explanation.
 
-WHAT TO LOOK FOR ON THE CARD:
-- Player name: usually large text on front
-- Year: often embedded in the set name at the bottom edge (e.g. "2021 Topps Chrome") or printed on card
-- Brand/Manufacturer: Topps, Panini, Upper Deck, Bowman, Fleer, Donruss, Score, Leaf, SP, O-Pee-Chee, Stadium Club, Select, Mosaic, Optic, Chronicles, National Treasures, Certified, Immaculate
-- Card number: look in ALL corners and on the back — usually formatted as #500 or 500/550; check bottom corners carefully
-- Set name: the full product name, usually at bottom edge — e.g. "2021 Topps Chrome", "2022 Panini Prizm", "2023 Bowman Draft"
-- Subset/Insert: any insert name like "All-Stars", "Future Stars", "Silver Sluggers", "Rated Rookie", "1st Edition"
-- Parallel: the card's finish/variation — look for color borders, shimmer, foil patterns:
-    Prizm: Silver (base prizm), Gold /10, Red /149, Blue /199, Purple /49, Green /75, Holo, Disco
-    Chrome: Refractor (base), Gold Refractor /50, Blue Refractor /150, Red Refractor /5, SuperFractor /1
-    Other: Gold, Rainbow Foil, Color Match, Tiger Stripe, Camo, Neon, Cracked Ice, Logoman
-    If it's a plain base card with no special finish, use null
-- Print run: numbered cards show "/150" or "12/50" etc. — include in parallel field e.g. "Gold /50"
-- Sport: Baseball, Football, or Basketball
-- Team: team name or city
-- is_rookie: true ONLY if you see "RC", "Rookie", or "Rookie Card" text anywhere on the card
-- is_autograph: true if there is a visible signature on the card
-- is_patch: true if there is a jersey/patch piece embedded in the card
-- condition_notes: visible creases, corners worn, surface scratches, centering issues — be specific
+READING THE CARD — check every corner, edge, and both sides if visible:
 
-Return this exact JSON structure:
-{
-  "player_name": "First Last",
-  "team": "Team Name",
-  "year": 2021,
-  "sport": "Baseball",
-  "brand": "Topps",
-  "card_number": "500",
-  "set_name": "2021 Topps Chrome",
-  "subset": null,
-  "parallel": "Prizm Silver",
-  "print_run": null,
-  "is_rookie": false,
-  "is_autograph": false,
-  "is_patch": false,
-  "condition_notes": null,
-  "confidence": "high"
-}
+PLAYER NAME: Large text, usually center or bottom of front.
 
-Be as specific as possible. Do not guess — use null for anything genuinely not visible. confidence = "high" if you can read the card clearly, "medium" if partially visible, "low" if very unclear.`;
+YEAR: Look at the bottom edge text line. "2024 Topps Chrome" means year=2024. If not visible, use null.
+
+BRAND (manufacturer only — single word/name):
+Topps, Bowman, Panini, Upper Deck, Leaf, Donruss, Fleer, Score, SP, O-Pee-Chee, Stadium Club, Select, Mosaic, Optic, Chronicles, Immaculate, Prizm, Certified, National Treasures
+
+SET NAME (full product name including year and brand):
+Examples: "2024 Topps Chrome", "2023 Panini Prizm", "2022 Bowman Draft", "2024 Leaf HYPE!"
+The set name IS the full line you read at the card edge.
+
+CARD NUMBER: Small text, often bottom corner or back. Format: "123", "RC-45", "BCP-12". NOT the print run fraction.
+
+PARALLEL (color/finish variation — this is critical for value):
+- Topps/Bowman Chrome: Base Refractor, Gold Refractor /50, Blue Refractor /150, Red Refractor /5, Orange /25, Purple /10, SuperFractor 1/1, Atomic, Speckle, Negative
+- Panini Prizm: Silver (base), Gold /10, Red /149, Blue /199, Purple /49, Green /75, Red White Blue, Hyper, Disco, Holo
+- Panini Optic: Base, Holo, Gold /10, Blue /149, Red /99, Pink /50, Purple /25
+- Leaf: Gold, Silver, Blue, Red — always numbered
+- Plain base card with no special finish = null
+Look for: color of the card border/foil, shimmer type, and any serial number stamp.
+
+PRINT RUN: Serial number stamp like "23/99" or "007/150" — record as "99" or "150" (denominator only).
+
+TEAM: The team name printed on the card (not inferred from player).
+
+SPORT: Baseball, Football, or Basketball only.
+
+is_rookie: true ONLY if RC, Rookie Card, or Rookie logo visible.
+is_autograph: true if a handwritten signature is present.
+is_patch: true if a fabric/jersey swatch is embedded.
+
+Return exactly:
+{"player_name":"","team":"","year":null,"sport":"Baseball","brand":"","card_number":"","set_name":"","subset":null,"parallel":null,"print_run":null,"is_rookie":false,"is_autograph":false,"is_patch":false,"condition_notes":null,"confidence":"high"}
+
+confidence: "high"=clearly readable, "medium"=partially visible, "low"=unclear image.`;
 
 async function recognizeWithClaude(apiKey, base64, mimeType) {
   const r = await fetch('https://api.anthropic.com/v1/messages', {
@@ -483,62 +480,84 @@ async function lookupViaEbayScrape(keywords) {
   return { prices, recentSales: recentSales.slice(0, 10), source: 'eBay Sold Listings' };
 }
 
-// Fetch HTML via allorigins.win proxy to bypass Railway IP blocks
+// Try multiple CORS proxies in sequence to bypass Railway's IP block
 async function proxiedFetch(targetUrl) {
-  const proxy = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(targetUrl);
-  const r = await fetch(proxy, { headers: { 'User-Agent': 'Mozilla/5.0' } });
-  if (!r.ok) throw new Error(`Proxy returned ${r.status} for ${targetUrl}`);
-  const text = await r.text();
-  if (text.length < 200) throw new Error('Proxy returned empty response');
-  return text;
+  const proxies = [
+    `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`,
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`,
+    `https://thingproxy.freeboard.io/fetch/${targetUrl}`,
+  ];
+  for (const proxyUrl of proxies) {
+    try {
+      const r = await fetch(proxyUrl, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!r.ok) continue;
+      const text = await r.text();
+      if (text.length > 500 && !text.includes('GoDaddy') && !text.includes('domain is for sale')) return text;
+    } catch (e) { /* try next proxy */ }
+  }
+  throw new Error('All proxies failed or returned empty pages');
 }
 
-async function lookupViaMainn(keywords) {
-  const url = 'https://mavin.io/search?' + new URLSearchParams({ q: keywords });
-  const html = await proxiedFetch(url);
+async function lookupViaSportsCardsPro(keywords) {
+  const url = 'https://sportscardspro.com/search?' + new URLSearchParams({ q: keywords });
+  // Try direct first (smaller site, less likely to block)
+  let html;
+  try {
+    const r = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (r.ok) html = await r.text();
+  } catch (e) { /* fall through to proxy */ }
+
+  if (!html || html.length < 500) html = await proxiedFetch(url);
 
   const prices = [];
   const recentSales = [];
 
-  // Mavin embeds sold listing data in JSON-LD
+  // Sports Card Pro embeds prices in JSON-LD and data attributes
   for (const m of html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)) {
     try {
       const d = JSON.parse(m[1]);
-      const items = Array.isArray(d.itemListElement) ? d.itemListElement : [];
-      for (const el of items) {
-        const price = parseFloat(el?.offers?.price || el?.price || 0);
-        if (price > 0.25 && price < 50000) {
-          prices.push(price);
-          recentSales.push({ title: el.name || '', price, date: '', url: el.url || '' });
+      const offers = Array.isArray(d.offers) ? d.offers : (d.offers ? [d.offers] : []);
+      for (const o of offers) {
+        const p = parseFloat(o.price || 0);
+        if (p > 0.25 && p < 50000) { prices.push(p); recentSales.push({ title: d.name || '', price: p, date: '', url: d.url || '' }); }
+      }
+      if (d.itemListElement) {
+        for (const el of d.itemListElement) {
+          const p = parseFloat(el?.offers?.price || 0);
+          if (p > 0.25 && p < 50000) { prices.push(p); recentSales.push({ title: el.name || '', price: p, date: '', url: el.url || '' }); }
         }
       }
     } catch (e) {}
   }
-
-  // Fallback: data-price attributes
   if (prices.length < 2) {
     for (const m of html.matchAll(/data-price="([\d.]+)"/g)) {
       const p = parseFloat(m[1]);
       if (p > 0.25 && p < 50000) prices.push(p);
     }
   }
-
-  // Fallback: dollar amounts near "sold" context
   if (prices.length < 2) {
     for (const m of html.matchAll(/\$\s*([\d,]+\.\d{2})/g)) {
       const p = parseFloat(m[1].replace(/,/g, ''));
       if (p > 0.25 && p < 50000) prices.push(p);
     }
   }
-
-  if (prices.length < 2) throw new Error('Not enough sales found on Mavin');
-  return { prices, recentSales: recentSales.slice(0, 10), source: 'Mavin.io' };
+  if (prices.length < 2) throw new Error('Not enough sales found on SportsCardsPro');
+  return { prices, recentSales: recentSales.slice(0, 10), source: 'SportsCardsPro' };
 }
 
 async function lookupVia130Point(keywords) {
   const url = 'https://130point.com/sales/?' + new URLSearchParams({ search: keywords });
   const html = await proxiedFetch(url);
-
   const prices = [];
   for (const m of html.matchAll(/<td[^>]*>\s*\$\s*([\d,]+\.?\d{0,2})\s*<\/td>/g)) {
     const p = parseFloat(m[1].replace(/,/g, ''));
@@ -567,7 +586,7 @@ app.post('/api/ebay-price', async (req, res) => {
       result = await lookupViaFindingAPI(appId, keywords);
     } else {
       const sources = [
-        { name: 'Mavin', fn: () => lookupViaMainn(keywords) },
+        { name: 'SportsCardsPro', fn: () => lookupViaSportsCardsPro(keywords) },
         { name: '130point', fn: () => lookupVia130Point(keywords) },
         { name: 'eBay', fn: () => lookupViaEbayScrape(keywords) },
       ];
@@ -601,12 +620,24 @@ app.post('/api/ebay-price', async (req, res) => {
     res.json(payload);
   } catch (e) {
     console.error('eBay price error:', e.message);
-    const blocked = e.message.includes('403') || e.message.includes('blocked') || e.message.includes('CAPTCHA') || e.message.includes('captcha');
-    const msg = blocked
-      ? 'eBay is blocking automated lookups from this server. Use the Search Online links in the card detail to check prices manually, or add an eBay App ID in Settings for reliable lookups.'
-      : e.message;
-    res.status(500).json({ error: msg });
+    res.status(500).json({
+      error: 'Automated lookup blocked — use Search Online links below to check price manually, then tap "Set Price" to save it.',
+      keywords,
+    });
   }
+});
+
+// Manual price set — user looked it up themselves and enters the value
+app.post('/api/cards/:id/set-price', (req, res) => {
+  const id = Number(req.params.id);
+  const { price, source } = req.body;
+  if (!price || isNaN(price)) return res.status(400).json({ error: 'Price required' });
+  run('UPDATE cards SET estimated_value=?, lookup_source=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+    [price, source || 'Manual', id]);
+  run(`INSERT INTO price_history (card_id, estimated_value, value_range_low, value_range_high, recent_sales_count, recent_sales_json, source)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [id, price, 0, 0, 0, '[]', source || 'Manual']);
+  res.json(queryOne('SELECT * FROM cards WHERE id=?', [id]));
 });
 
 app.get('/api/debug/storage', (req, res) => {
