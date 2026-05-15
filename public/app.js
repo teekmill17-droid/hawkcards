@@ -9,6 +9,8 @@ let scanQueue = []; // array of { file, preview, filename }
 let editingId = null;
 let currentImagePath = '';
 let cameraStream = null;
+let reviewCardData = null;
+let bulkReviewCards = [];
 
 // ========== INIT ==========
 document.addEventListener('DOMContentLoaded', async () => {
@@ -441,10 +443,14 @@ async function lookupDetailValue(id) {
 // ========== SCAN ==========
 function resetScan() {
   scanQueue = [];
+  reviewCardData = null;
+  bulkReviewCards = [];
   stopCamera();
   document.getElementById('scan-start').style.display = 'grid';
   document.getElementById('camera-view').style.display = 'none';
   document.getElementById('scan-preview').style.display = 'none';
+  document.getElementById('scan-review-single').style.display = 'none';
+  document.getElementById('scan-review-bulk').style.display = 'none';
   document.getElementById('bulk-more').style.display = bulkMode ? 'flex' : 'none';
   document.getElementById('file-input').multiple = bulkMode;
   document.getElementById('upload-sub').textContent = bulkMode ? 'Select multiple photos' : 'Select a photo';
@@ -467,33 +473,27 @@ function triggerUpload() {
 async function handleFileUpload(e) {
   const files = Array.from(e.target.files || []);
   if (!files.length) return;
+  e.target.value = '';
 
-  // Upload to server
-  const formData = new FormData();
   if (bulkMode || files.length > 1) {
+    const formData = new FormData();
     files.forEach(f => formData.append('images', f));
     try {
       const res = await fetch('/api/upload/bulk', { method: 'POST', body: formData });
       const results = await res.json();
-      results.forEach(r => {
-        scanQueue.push({ path: r.path, filename: r.filename });
-      });
-    } catch (err) {
-      showToast('Upload failed', 'error'); return;
-    }
+      results.forEach(r => scanQueue.push({ path: r.path, filename: r.filename }));
+    } catch (err) { showToast('Upload failed', 'error'); return; }
+    showScanPreview();
   } else {
+    // Single file — upload then immediately recognize
+    const formData = new FormData();
     formData.append('image', files[0]);
     try {
       const res = await fetch('/api/upload', { method: 'POST', body: formData });
       const result = await res.json();
-      scanQueue.push({ path: result.path, filename: result.filename });
-    } catch (err) {
-      showToast('Upload failed', 'error'); return;
-    }
+      await autoRecognizeCard(result.path);
+    } catch (err) { showToast('Upload failed', 'error'); }
   }
-
-  showScanPreview();
-  e.target.value = '';
 }
 
 async function startCamera() {
@@ -560,13 +560,14 @@ async function capturePhoto() {
   try {
     const res = await fetch('/api/upload', { method: 'POST', body: formData });
     const result = await res.json();
-    scanQueue.push({ path: result.path, filename: result.filename });
 
     if (bulkMode) {
+      scanQueue.push({ path: result.path, filename: result.filename });
       showToast(`Card #${scanQueue.length} captured!`, 'info');
+      showScanPreview();
     } else {
       stopCamera();
-      showScanPreview();
+      await autoRecognizeCard(result.path);
     }
   } catch (e) {
     showToast('Capture failed', 'error');
@@ -576,6 +577,8 @@ async function capturePhoto() {
 function showScanPreview() {
   document.getElementById('scan-start').style.display = 'none';
   document.getElementById('camera-view').style.display = 'none';
+  document.getElementById('scan-review-single').style.display = 'none';
+  document.getElementById('scan-review-bulk').style.display = 'none';
 
   const preview = document.getElementById('scan-preview');
   preview.style.display = 'block';
@@ -610,63 +613,28 @@ function clearScans() {
 async function processScans() {
   if (!scanQueue.length) return;
 
-  showAI('AI Analyzing Cards...', `Processing ${scanQueue.length} card(s)...`, 'Identifying player, team, year, card #, set & value');
+  showAI('Analyzing Cards...', `Processing ${scanQueue.length} card(s)...`, 'Identifying player, team, year, brand & set');
 
-  const images = scanQueue.map((item, i) => ({
-    imagePath: item.path,
-    tempId: i.toString()
-  }));
+  const images = scanQueue.map((item, i) => ({ imagePath: item.path, tempId: i.toString() }));
 
   try {
-    // Process with AI recognition
     const res = await fetch('/api/recognize/bulk', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ images })
     });
     const results = await res.json();
-
-    // Save each recognized card
-    let savedCount = 0;
-    for (let i = 0; i < results.length; i++) {
-      const r = results[i];
-      const imgPath = scanQueue[i]?.path || '';
-
-      document.getElementById('ai-sub').textContent = `Saving card ${i + 1} of ${results.length}...`;
-      document.getElementById('ai-progress').style.width = `${((i + 1) / results.length) * 100}%`;
-
-      const cardData = {
-        player_name: r.player_name || 'Unknown',
-        team: r.team || '',
-        year: r.year || null,
-        sport: r.sport || 'Baseball',
-        brand: r.brand || '',
-        card_number: r.card_number || '',
-        set_name: r.set_name || '',
-        subset: r.subset || '',
-        parallel: r.parallel || '',
-        condition_grade: r.condition_grade || 'Near Mint',
-        estimated_value: r.estimated_value || 0,
-        image_path: imgPath,
-        ai_confidence: r.confidence || '',
-        notes: r.is_rookie ? 'Rookie Card' : '',
-      };
-
-      await fetch('/api/cards', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(cardData)
-      });
-      savedCount++;
-    }
-
     hideAI();
-    showToast(`${savedCount} card(s) recognized and added!`, 'success');
-    resetScan();
-    switchView('collection');
+
+    bulkReviewCards = results.map((r, i) => ({
+      ...r,
+      image_path: scanQueue[parseInt(r.tempId) || i]?.path || '',
+    }));
+
+    showBulkReview(bulkReviewCards);
   } catch (e) {
     hideAI();
-    showToast('AI recognition failed — check Settings for API key', 'error');
+    showToast('Recognition failed — check API key in Settings', 'error');
   }
 }
 
@@ -811,6 +779,178 @@ function showToast(msg, type = 'success') {
   toast.style.display = 'block';
   clearTimeout(toast._timeout);
   toast._timeout = setTimeout(() => { toast.style.display = 'none'; }, 3500);
+}
+
+// ========== SCAN REVIEW ==========
+
+async function autoRecognizeCard(imagePath) {
+  showAI('Analyzing Card...', 'Reading card details...', 'Identifying player, year, brand & checking eBay prices');
+  try {
+    const res = await fetch('/api/recognize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ imagePath })
+    });
+    const data = await res.json();
+    hideAI();
+    if (data.error) { showToast(data.error, 'error'); resetScan(); return; }
+    reviewCardData = { ...data, image_path: imagePath };
+    showSingleReview(reviewCardData);
+  } catch (e) {
+    hideAI();
+    showToast('Recognition failed — check API key in Settings', 'error');
+    resetScan();
+  }
+}
+
+function showSingleReview(card) {
+  document.getElementById('scan-start').style.display = 'none';
+  document.getElementById('camera-view').style.display = 'none';
+  document.getElementById('scan-preview').style.display = 'none';
+
+  document.getElementById('review-img').src = card.image_path;
+  document.getElementById('review-player').textContent = card.player_name || 'Unknown Player';
+  document.getElementById('review-meta').textContent =
+    [card.year, card.team, card.brand, card.set_name, card.parallel].filter(Boolean).join(' · ');
+
+  const priceEl = document.getElementById('review-ebay');
+  const labelEl = document.getElementById('review-ebay-label');
+  if (card.estimated_value > 0) {
+    priceEl.textContent = `$${Number(card.estimated_value).toLocaleString()}`;
+    labelEl.textContent = card.lookup_source || 'eBay Sold Listings';
+    priceEl.style.display = 'block';
+    labelEl.style.display = 'block';
+  } else {
+    priceEl.style.display = 'none';
+    labelEl.style.display = 'none';
+  }
+
+  document.getElementById('scan-review-single').style.display = 'block';
+}
+
+async function quickSaveCard() {
+  if (!reviewCardData) return;
+  const btn = document.querySelector('#scan-review-single .btn-primary');
+  if (btn) btn.disabled = true;
+  try {
+    await fetch('/api/cards', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        player_name: reviewCardData.player_name || '',
+        team: reviewCardData.team || '',
+        year: reviewCardData.year || null,
+        sport: reviewCardData.sport || 'Baseball',
+        brand: reviewCardData.brand || '',
+        card_number: reviewCardData.card_number || '',
+        set_name: reviewCardData.set_name || '',
+        subset: reviewCardData.subset || '',
+        parallel: reviewCardData.parallel || '',
+        condition_grade: reviewCardData.condition_grade || 'Near Mint',
+        estimated_value: reviewCardData.estimated_value || 0,
+        image_path: reviewCardData.image_path || '',
+        ai_confidence: reviewCardData.confidence || '',
+        lookup_source: reviewCardData.lookup_source || 'eBay Sold Listings',
+        notes: reviewCardData.is_rookie ? 'Rookie Card' : '',
+      })
+    });
+    showToast('Card added to collection!', 'success');
+    reviewCardData = null;
+    resetScan();
+    switchView('collection');
+  } catch (e) {
+    if (btn) btn.disabled = false;
+    showToast('Failed to save card', 'error');
+  }
+}
+
+function editReviewCard() {
+  if (!reviewCardData) return;
+  editingId = null;
+  currentImagePath = reviewCardData.image_path || '';
+  document.getElementById('form-title').textContent = 'Add Card';
+  document.getElementById('save-btn').textContent = 'Add to Collection';
+
+  ['player_name','team','year','brand','card_number','set_name','subset','parallel','psa_grade','estimated_value','purchase_price'].forEach(f => {
+    const el = document.getElementById(`f-${f}`);
+    if (el) el.value = reviewCardData[f] || '';
+  });
+  if (reviewCardData.sport) document.getElementById('f-sport').value = reviewCardData.sport;
+  if (reviewCardData.condition_grade) document.getElementById('f-condition_grade').value = reviewCardData.condition_grade;
+  document.getElementById('f-is_duplicate').checked = false;
+  document.getElementById('f-is_wishlist').checked = false;
+  document.getElementById('f-is_graded').checked = false;
+
+  if (currentImagePath) {
+    document.getElementById('form-image-preview').style.display = 'block';
+    document.getElementById('form-preview-img').src = currentImagePath;
+  }
+  resetScan();
+  switchView('add');
+}
+
+function showBulkReview(cards) {
+  document.getElementById('scan-preview').style.display = 'none';
+  document.getElementById('review-bulk-count').textContent =
+    `${cards.length} card${cards.length !== 1 ? 's' : ''} recognized — review before saving`;
+
+  document.getElementById('bulk-review-list').innerHTML = cards.map((card, i) => `
+    <div class="bulk-review-item">
+      ${card.image_path
+        ? `<img src="${esc(card.image_path)}" class="bulk-review-thumb" alt="">`
+        : `<div class="bulk-review-thumb-placeholder">${sportEmoji[card.sport] || '🃏'}</div>`}
+      <div class="bulk-review-info">
+        <p class="bulk-review-name">${esc(card.player_name || 'Unknown')}</p>
+        <p class="bulk-review-meta">${esc([card.year, card.brand, card.set_name].filter(Boolean).join(' · ') || card.sport || '')}</p>
+        ${card.estimated_value > 0 ? `<p class="bulk-review-price">$${Number(card.estimated_value).toLocaleString()}</p>` : ''}
+      </div>
+      <button class="bulk-edit-btn" onclick="editBulkCard(${i})">Edit</button>
+    </div>
+  `).join('');
+
+  document.getElementById('scan-review-bulk').style.display = 'block';
+}
+
+async function saveBulkCards() {
+  const btn = document.querySelector('#scan-review-bulk .btn-primary');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
+  let saved = 0;
+  for (const card of bulkReviewCards) {
+    try {
+      await fetch('/api/cards', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          player_name: card.player_name || '',
+          team: card.team || '',
+          year: card.year || null,
+          sport: card.sport || 'Baseball',
+          brand: card.brand || '',
+          card_number: card.card_number || '',
+          set_name: card.set_name || '',
+          subset: card.subset || '',
+          parallel: card.parallel || '',
+          condition_grade: card.condition_grade || 'Near Mint',
+          estimated_value: card.estimated_value || 0,
+          image_path: card.image_path || '',
+          ai_confidence: card.confidence || '',
+          notes: card.is_rookie ? 'Rookie Card' : '',
+        })
+      });
+      saved++;
+    } catch (e) {}
+  }
+  showToast(`${saved} card${saved !== 1 ? 's' : ''} added to collection!`, 'success');
+  bulkReviewCards = [];
+  resetScan();
+  switchView('collection');
+}
+
+function editBulkCard(index) {
+  const card = bulkReviewCards[index];
+  if (!card) return;
+  reviewCardData = card;
+  editReviewCard();
 }
 
 // ========== UTILITY ==========

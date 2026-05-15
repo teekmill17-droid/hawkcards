@@ -240,6 +240,34 @@
             <button class="btn-outline" onclick="triggerUpload()">📁 Upload More</button>
           </div>
         </div>
+
+        <!-- Single card review (shown after AI recognition) -->
+        <div id="scan-review-single" style="display:none">
+          <div class="review-card">
+            <img id="review-img" src="" alt="" class="review-card-img">
+            <div class="review-card-info">
+              <p class="review-player" id="review-player"></p>
+              <p class="review-meta" id="review-meta"></p>
+              <p class="review-ebay" id="review-ebay"></p>
+              <p class="review-ebay-label" id="review-ebay-label"></p>
+              <div class="review-actions">
+                <button class="btn-primary" onclick="quickSaveCard()">Add to Collection</button>
+                <button class="btn-secondary" onclick="editReviewCard()">Edit Details</button>
+              </div>
+            </div>
+          </div>
+          <button class="btn-secondary" onclick="resetScan()" style="width:100%;margin-top:10px">← Scan Another</button>
+        </div>
+
+        <!-- Bulk review (shown after batch AI processing) -->
+        <div id="scan-review-bulk" style="display:none">
+          <p class="review-bulk-title" id="review-bulk-count"></p>
+          <div id="bulk-review-list" class="bulk-review-list"></div>
+          <div class="bulk-review-actions">
+            <button class="btn-primary" onclick="saveBulkCards()">Save All to Collection</button>
+            <button class="btn-secondary" onclick="resetScan()">Cancel</button>
+          </div>
+        </div>
       </section>
 
       <!-- Stats View -->
