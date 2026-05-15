@@ -228,46 +228,99 @@ function clearSearch() {
 // ========== DETAIL MODAL ==========
 async function openDetail(id) {
   try {
-    const card = await (await fetch(`/api/cards/${id}`)).json();
+    const [card, history] = await Promise.all([
+      fetch(`/api/cards/${id}`).then(r => r.json()),
+      fetch(`/api/cards/${id}/price-history`).then(r => r.json()),
+    ]);
+
+    const lastSales = history.length ? history[history.length - 1].recent_sales || [] : [];
+    const badges = [
+      card.is_duplicate ? '<span class="dbadge dupe">DUPE</span>' : '',
+      card.is_graded ? `<span class="dbadge graded">${card.psa_grade || 'GRADED'}</span>` : '',
+      card.is_wishlist ? '<span class="dbadge wish">WISH</span>' : '',
+    ].filter(Boolean).join('');
 
     document.getElementById('detail-content').innerHTML = `
-      ${card.image_path ? `<img class="detail-img" src="${card.image_path}" alt="">` : ''}
+      ${card.image_path
+        ? `<div class="detail-img-wrap"><img class="detail-img" src="${card.image_path}" alt=""></div>`
+        : `<div class="detail-img-placeholder">${sportEmoji[card.sport] || '🃏'}</div>`}
+
       <div class="detail-body">
-        <div class="detail-header">
-          <div>
-            <p class="detail-name">${esc(card.player_name || 'Unknown')}</p>
-            <p class="detail-sub">${[card.team, card.year, card.sport].filter(Boolean).join(' · ')}</p>
+        <div class="detail-top">
+          <div class="detail-title-row">
+            <div>
+              <p class="detail-name">${esc(card.player_name || 'Unknown')} ${badges}</p>
+              <p class="detail-sub">${[card.team, card.year, card.sport].filter(Boolean).join(' · ')}</p>
+            </div>
+            ${card.estimated_value > 0
+              ? `<div class="detail-val-block">
+                   <span class="detail-value">$${Number(card.estimated_value).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
+                   <span class="detail-val-label">est. value</span>
+                 </div>`
+              : ''}
           </div>
-          ${card.estimated_value > 0 ? `<span class="detail-value">$${Number(card.estimated_value).toLocaleString()}</span>` : ''}
+          <div class="detail-actions">
+            <button class="detail-btn" onclick="editCard(${card.id})">✏️ Edit</button>
+            <button class="detail-btn accent" onclick="lookupDetailValue(${card.id})">🔍 Lookup Price</button>
+            <button class="detail-btn" onclick="toggleDupe(${card.id}, ${card.is_duplicate})">${card.is_duplicate ? '✅ Undupe' : '🔁 Mark Dupe'}</button>
+            <button class="detail-btn danger" onclick="deleteCard(${card.id})">🗑 Delete</button>
+          </div>
         </div>
 
-        <div class="detail-grid">
-          ${detailField('Brand', card.brand)}
-          ${detailField('Card #', card.card_number)}
-          ${detailField('Set', card.set_name)}
-          ${detailField('Subset', card.subset)}
-          ${detailField('Parallel', card.parallel)}
-          ${detailField('Condition', card.condition_grade)}
-          ${detailField('Grade', card.psa_grade)}
-          ${detailField('Purchase Price', card.purchase_price ? `$${card.purchase_price}` : '')}
-          ${detailField('Type', card.is_duplicate ? 'Duplicate' : 'Original')}
-          ${detailField('Status', card.is_graded ? 'Graded' : 'Raw')}
+        <div class="detail-section">
+          <p class="detail-section-title">Card Details</p>
+          <div class="detail-grid">
+            ${detailField('Brand', card.brand)}
+            ${detailField('Card #', card.card_number)}
+            ${detailField('Set', card.set_name)}
+            ${detailField('Subset', card.subset)}
+            ${detailField('Parallel', card.parallel)}
+            ${detailField('Condition', card.condition_grade)}
+            ${detailField('Grade', card.psa_grade)}
+            ${detailField('Purchased', card.purchase_price > 0 ? `$${card.purchase_price}` : '')}
+          </div>
+          ${card.notes ? `<div class="detail-notes">${esc(card.notes)}</div>` : ''}
         </div>
 
-        ${card.notes ? `<div class="detail-notes">${esc(card.notes)}</div>` : ''}
-
-        ${card.lookup_source ? `
-          <div class="detail-lookup-result">
-            <p><strong>Value Source:</strong> ${esc(card.lookup_source)}</p>
+        ${history.length > 1 ? `
+          <div class="detail-section">
+            <p class="detail-section-title">Price History <span class="detail-section-count">${history.length} lookups</span></p>
+            <div class="price-chart-wrap">${buildPriceChart(history)}</div>
+            <div class="price-history-list">
+              ${history.slice(-5).reverse().map(h => `
+                <div class="ph-row">
+                  <span class="ph-date">${h.looked_up_at.slice(0,10)}</span>
+                  <span class="ph-val">$${Number(h.estimated_value).toFixed(2)}</span>
+                  <span class="ph-range">${h.value_range_low > 0 ? `$${h.value_range_low}–$${h.value_range_high}` : ''}</span>
+                  <span class="ph-count">${h.recent_sales_count > 0 ? `${h.recent_sales_count} sold` : ''}</span>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        ` : history.length === 1 ? `
+          <div class="detail-section">
+            <p class="detail-section-title">Price History</p>
+            <p class="detail-hint">1 lookup so far — check again later to see trend</p>
           </div>
         ` : ''}
 
-        <div class="detail-actions">
-          <button class="detail-btn" onclick="editCard(${card.id})">✏️ Edit</button>
-          <button class="detail-btn" onclick="lookupDetailValue(${card.id})">🔍 Lookup</button>
-          <button class="detail-btn" onclick="toggleDupe(${card.id}, ${card.is_duplicate})">${card.is_duplicate ? '✅ Undupe' : '🔁 Dupe'}</button>
-          <button class="detail-btn danger" onclick="deleteCard(${card.id})">🗑</button>
-        </div>
+        ${lastSales.length ? `
+          <div class="detail-section">
+            <p class="detail-section-title">Recent eBay Sales <span class="detail-section-count">${lastSales.length} listings</span></p>
+            <div class="sales-list">
+              ${lastSales.map(s => `
+                <div class="sale-row">
+                  <div class="sale-info">
+                    <p class="sale-title">${esc(s.title)}</p>
+                    <p class="sale-date">${s.date || ''}</p>
+                  </div>
+                  <span class="sale-price">$${Number(s.price).toFixed(2)}</span>
+                  ${s.url ? `<a class="sale-link" href="${s.url}" target="_blank">↗</a>` : ''}
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        ` : ''}
       </div>
     `;
 
@@ -279,7 +332,40 @@ async function openDetail(id) {
 
 function detailField(label, value) {
   if (!value) return '';
-  return `<div><p class="detail-field-label">${label}</p><p class="detail-field-value">${esc(String(value))}</p></div>`;
+  return `<div class="detail-field"><p class="detail-field-label">${label}</p><p class="detail-field-value">${esc(String(value))}</p></div>`;
+}
+
+function buildPriceChart(history) {
+  if (history.length < 2) return '';
+  const W = 320, H = 80, pad = { t: 8, r: 8, b: 20, l: 40 };
+  const cw = W - pad.l - pad.r, ch = H - pad.t - pad.b;
+  const vals = history.map(h => h.estimated_value);
+  const minV = Math.min(...vals), maxV = Math.max(...vals);
+  const range = maxV - minV || 1;
+  const pts = history.map((h, i) => {
+    const x = pad.l + (i / (history.length - 1)) * cw;
+    const y = pad.t + ch - ((h.estimated_value - minV) / range) * ch;
+    return `${x},${y}`;
+  });
+  const area = `${pad.l},${pad.t + ch} ${pts.join(' ')} ${pad.l + cw},${pad.t + ch}`;
+  const first = pts[0].split(','), last = pts[pts.length - 1].split(',');
+  const change = vals[vals.length - 1] - vals[0];
+  const color = change >= 0 ? '#34d399' : '#ef4444';
+  return `<svg viewBox="0 0 ${W} ${H}" class="price-chart-svg">
+    <defs>
+      <linearGradient id="cg" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="${color}" stop-opacity="0.25"/>
+        <stop offset="100%" stop-color="${color}" stop-opacity="0"/>
+      </linearGradient>
+    </defs>
+    <polygon points="${area}" fill="url(#cg)"/>
+    <polyline points="${pts.join(' ')}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="${last[0]}" cy="${last[1]}" r="3.5" fill="${color}"/>
+    <text x="${pad.l - 4}" y="${Number(pad.t) + Number(ch) + 1}" font-size="9" fill="rgba(255,255,255,0.35)" text-anchor="end">$${minV.toFixed(0)}</text>
+    <text x="${pad.l - 4}" y="${pad.t + 8}" font-size="9" fill="rgba(255,255,255,0.35)" text-anchor="end">$${maxV.toFixed(0)}</text>
+    <text x="${first[0]}" y="${H}" font-size="8" fill="rgba(255,255,255,0.3)" text-anchor="middle">${history[0].looked_up_at.slice(5,10)}</text>
+    <text x="${last[0]}" y="${H}" font-size="8" fill="rgba(255,255,255,0.3)" text-anchor="middle">${history[history.length-1].looked_up_at.slice(5,10)}</text>
+  </svg>`;
 }
 
 function closeDetail() {
@@ -458,16 +544,14 @@ async function lookupValue() {
 }
 
 async function lookupDetailValue(id) {
-  closeDetail();
   const card = await (await fetch(`/api/cards/${id}`)).json();
-
   showAI('Looking up price...', `Checking eBay for ${card.player_name}...`, 'Finding real recent sale prices');
 
   try {
     const res = await fetch('/api/ebay-price', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(card)
+      body: JSON.stringify({ ...card, card_id: id })
     });
     const result = await res.json();
     hideAI();
@@ -476,7 +560,7 @@ async function lookupDetailValue(id) {
 
     if (result.estimated_value > 0) {
       card.estimated_value = result.estimated_value;
-      card.lookup_source = 'eBay Sold Listings';
+      card.lookup_source = result.source || 'eBay Sold Listings';
       await fetch(`/api/cards/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -484,6 +568,7 @@ async function lookupDetailValue(id) {
       });
       showToast(`eBay avg: $${result.estimated_value} · ${result.recent_sales_count} sold`, 'success');
       loadCards();
+      openDetail(id);
     } else {
       showToast(result.message || 'No recent eBay sales found', 'info');
     }
@@ -739,77 +824,115 @@ async function processScans() {
 async function loadStats() {
   try {
     const stats = await (await fetch('/api/stats')).json();
-
-    const statCards = [
-      { n: stats.total, l: 'Total Cards', c: '#a78bfa' },
-      { n: `$${stats.totalValue.toLocaleString()}`, l: 'Est. Value', c: '#34d399' },
-      { n: stats.duplicates, l: 'Duplicates', c: '#fbbf24' },
-      { n: stats.graded, l: 'Graded', c: '#60a5fa' },
-    ];
+    const tv = stats.totalValue || 0;
 
     let html = `
       <div class="stats-grid">
-        ${statCards.map((s, i) => `
-          <div class="stat-card" style="animation-delay:${i * 0.06}s">
-            <p class="stat-num" style="color:${s.c}">${s.n}</p>
-            <p class="stat-label">${s.l}</p>
-          </div>
-        `).join('')}
-      </div>
-
-      <h3 class="stat-section-title">By Sport</h3>
-      ${stats.bySport.map(s => `
-        <div class="sport-row">
-          <span class="sport-emoji">${sportEmoji[s.sport] || '🃏'}</span>
-          <div class="sport-info">
-            <div class="sport-top">
-              <span class="sport-name">${s.sport}</span>
-              <span class="sport-meta">${s.count} cards · $${s.value.toLocaleString()}</span>
-            </div>
-            <div class="bar-bg"><div class="bar-fg" style="width:${stats.total ? (s.count / stats.total) * 100 : 0}%"></div></div>
-          </div>
+        <div class="stat-card" style="animation-delay:0s">
+          <p class="stat-num" style="color:#a78bfa">${stats.total}</p>
+          <p class="stat-label">Total Cards</p>
         </div>
-      `).join('')}
+        <div class="stat-card" style="animation-delay:0.06s">
+          <p class="stat-num" style="color:#34d399">$${tv.toLocaleString(undefined,{maximumFractionDigits:0})}</p>
+          <p class="stat-label">Est. Value</p>
+        </div>
+        <div class="stat-card" style="animation-delay:0.12s">
+          <p class="stat-num" style="color:#60a5fa">${stats.graded}</p>
+          <p class="stat-label">Graded</p>
+        </div>
+        <div class="stat-card" style="animation-delay:0.18s">
+          <p class="stat-num" style="color:#fbbf24">${stats.duplicates}</p>
+          <p class="stat-label">Dupes</p>
+        </div>
+      </div>
     `;
 
-    if (stats.byBrand.length) {
+    // Portfolio value chart
+    if (stats.portfolioHistory && stats.portfolioHistory.length > 1) {
       html += `
-        <h3 class="stat-section-title">Top Brands</h3>
-        ${stats.byBrand.map(b => `
-          <div class="sport-row">
-            <span class="sport-emoji">🏷</span>
-            <div class="sport-info">
-              <div class="sport-top">
-                <span class="sport-name">${esc(b.brand)}</span>
-                <span class="sport-meta">${b.count} cards · $${b.value.toLocaleString()}</span>
-              </div>
-              <div class="bar-bg"><div class="bar-fg" style="width:${stats.total ? (b.count / stats.total) * 100 : 0}%"></div></div>
-            </div>
-          </div>
-        `).join('')}
+        <h3 class="stat-section-title">Portfolio Value</h3>
+        <div class="portfolio-chart-wrap">${buildPortfolioChart(stats.portfolioHistory)}</div>
       `;
     }
 
-    if (stats.topCards.length) {
-      html += `
-        <h3 class="stat-section-title">💎 Most Valuable</h3>
-        ${stats.topCards.map((c, i) => `
-          <div class="top-card-row" onclick="openDetail(${c.id})" style="cursor:pointer">
-            <span class="top-rank">#${i + 1}</span>
-            <div style="flex:1">
-              <p class="top-name">${esc(c.player_name)}</p>
-              <p class="top-meta">${[c.team, c.year, c.sport, c.set_name].filter(Boolean).join(' · ')}</p>
+    // Top movers
+    if (stats.movers && stats.movers.length) {
+      html += `<h3 class="stat-section-title">📈 Top Movers</h3>`;
+      html += stats.movers.map(m => {
+        const up = m.change >= 0;
+        return `
+          <div class="mover-row" onclick="openDetail(${m.id})">
+            ${m.image_path
+              ? `<img src="${m.image_path}" class="mover-thumb" alt="">`
+              : `<div class="mover-thumb-ph">${sportEmoji[m.sport] || '🃏'}</div>`}
+            <div class="mover-info">
+              <p class="mover-name">${esc(m.player_name)}</p>
+              <p class="mover-meta">${[m.year, m.set_name, m.parallel].filter(Boolean).join(' · ')}</p>
             </div>
-            <span class="top-value">$${(c.estimated_value || 0).toLocaleString()}</span>
+            <div class="mover-change ${up ? 'up' : 'down'}">
+              <span class="mover-arrow">${up ? '▲' : '▼'}</span>
+              <span class="mover-delta">$${Math.abs(m.change).toFixed(2)}</span>
+              <span class="mover-now">now $${Number(m.value_last).toFixed(2)}</span>
+            </div>
           </div>
-        `).join('')}
-      `;
+        `;
+      }).join('');
+    }
+
+    // By sport
+    html += `<h3 class="stat-section-title">By Sport</h3>`;
+    html += stats.bySport.map(s => `
+      <div class="sport-row">
+        <span class="sport-emoji">${sportEmoji[s.sport] || '🃏'}</span>
+        <div class="sport-info">
+          <div class="sport-top">
+            <span class="sport-name">${s.sport}</span>
+            <span class="sport-meta">${s.count} cards · $${Number(s.value).toLocaleString(undefined,{maximumFractionDigits:0})}</span>
+          </div>
+          <div class="bar-bg"><div class="bar-fg" style="width:${stats.total ? (s.count / stats.total) * 100 : 0}%"></div></div>
+        </div>
+      </div>
+    `).join('');
+
+    // Top brands
+    if (stats.byBrand.length) {
+      html += `<h3 class="stat-section-title">Top Brands</h3>`;
+      const maxBrand = stats.byBrand[0].count;
+      html += stats.byBrand.map(b => `
+        <div class="sport-row">
+          <span class="sport-emoji">🏷</span>
+          <div class="sport-info">
+            <div class="sport-top">
+              <span class="sport-name">${esc(b.brand)}</span>
+              <span class="sport-meta">${b.count} cards · $${Number(b.value).toLocaleString(undefined,{maximumFractionDigits:0})}</span>
+            </div>
+            <div class="bar-bg"><div class="bar-fg" style="width:${(b.count / maxBrand) * 100}%"></div></div>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    // Most valuable
+    if (stats.topCards.length) {
+      html += `<h3 class="stat-section-title">💎 Most Valuable</h3>`;
+      html += stats.topCards.map((c, i) => `
+        <div class="top-card-row" onclick="openDetail(${c.id})">
+          ${c.image_path
+            ? `<img src="${c.image_path}" class="top-card-thumb" alt="">`
+            : `<span class="top-rank">#${i+1}</span>`}
+          <div class="top-card-info">
+            <p class="top-name">${esc(c.player_name)}</p>
+            <p class="top-meta">${[c.year, c.brand, c.set_name, c.parallel].filter(Boolean).join(' · ')}</p>
+          </div>
+          <span class="top-value">$${Number(c.estimated_value).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
+        </div>
+      `).join('');
     }
 
     html += `
-      <div style="margin-top:28px; display:flex; gap:10px; flex-wrap:wrap">
-        <button class="btn-primary" onclick="exportCSV()" style="flex:1">📥 Export CSV</button>
-        <button class="btn-secondary" onclick="openSettings()" style="flex:1">⚙️ Settings</button>
+      <div class="stats-actions">
+        <button class="btn-primary" onclick="exportCSV()">📥 Export CSV</button>
+        <button class="btn-secondary" onclick="openSettings()">⚙️ Settings</button>
       </div>
     `;
 
@@ -817,6 +940,37 @@ async function loadStats() {
   } catch (e) {
     console.error('Failed to load stats:', e);
   }
+}
+
+function buildPortfolioChart(history) {
+  const W = 340, H = 100, pad = { t: 10, r: 10, b: 22, l: 46 };
+  const cw = W - pad.l - pad.r, ch = H - pad.t - pad.b;
+  const vals = history.map(h => Number(h.value));
+  const minV = Math.min(...vals) * 0.95, maxV = Math.max(...vals) * 1.05;
+  const range = maxV - minV || 1;
+  const pts = history.map((h, i) => {
+    const x = pad.l + (i / (history.length - 1)) * cw;
+    const y = pad.t + ch - ((vals[i] - minV) / range) * ch;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+  const area = `${pad.l},${pad.t + ch} ${pts.join(' ')} ${pad.l + cw},${pad.t + ch}`;
+  const color = vals[vals.length-1] >= vals[0] ? '#34d399' : '#ef4444';
+  const fmt = v => v >= 1000 ? `$${(v/1000).toFixed(1)}k` : `$${v.toFixed(0)}`;
+  return `<svg viewBox="0 0 ${W} ${H}" class="portfolio-chart-svg">
+    <defs>
+      <linearGradient id="pg" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="${color}" stop-opacity="0.3"/>
+        <stop offset="100%" stop-color="${color}" stop-opacity="0"/>
+      </linearGradient>
+    </defs>
+    <polygon points="${area}" fill="url(#pg)"/>
+    <polyline points="${pts.join(' ')}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="${pts[pts.length-1].split(',')[0]}" cy="${pts[pts.length-1].split(',')[1]}" r="4" fill="${color}"/>
+    <text x="${pad.l - 4}" y="${pad.t + ch}" font-size="9" fill="rgba(255,255,255,0.4)" text-anchor="end">${fmt(minV)}</text>
+    <text x="${pad.l - 4}" y="${pad.t + 9}" font-size="9" fill="rgba(255,255,255,0.4)" text-anchor="end">${fmt(maxV)}</text>
+    <text x="${pad.l}" y="${H}" font-size="8" fill="rgba(255,255,255,0.3)">${history[0].date.slice(5)}</text>
+    <text x="${pad.l + cw}" y="${H}" font-size="8" fill="rgba(255,255,255,0.3)" text-anchor="end">${history[history.length-1].date.slice(5)}</text>
+  </svg>`;
 }
 
 // ========== EXPORT ==========

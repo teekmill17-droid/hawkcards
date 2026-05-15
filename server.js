@@ -473,7 +473,7 @@ async function lookupViaEbayScrape(keywords) {
 }
 
 app.post('/api/ebay-price', async (req, res) => {
-  const { player_name } = req.body;
+  const { player_name, card_id } = req.body;
   if (!player_name) return res.status(400).json({ error: 'Player name required' });
 
   const keywords = buildKeywords(req.body);
@@ -491,11 +491,32 @@ app.post('/api/ebay-price', async (req, res) => {
     if (!prices.length) return res.json({ estimated_value: 0, recent_sales_count: 0, message: 'No recent eBay sales found' });
 
     const stats = calcStats(prices);
-    res.json({ ...stats, recent_sales: recentSales, source });
+    const payload = { ...stats, recent_sales: recentSales, source };
+
+    // Store in price history if we have a card ID
+    if (card_id) {
+      run(`INSERT INTO price_history (card_id, estimated_value, value_range_low, value_range_high, recent_sales_count, recent_sales_json, source)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [card_id, stats.estimated_value, stats.value_range_low || 0, stats.value_range_high || 0,
+         stats.recent_sales_count, JSON.stringify(recentSales || []), source]);
+    }
+
+    res.json(payload);
   } catch (e) {
     console.error('eBay price error:', e.message);
     res.status(500).json({ error: e.message });
   }
+});
+
+app.get('/api/cards/:id/price-history', (req, res) => {
+  const history = query(
+    'SELECT * FROM price_history WHERE card_id = ? ORDER BY looked_up_at ASC',
+    [Number(req.params.id)]
+  );
+  res.json(history.map(h => ({
+    ...h,
+    recent_sales: JSON.parse(h.recent_sales_json || '[]'),
+  })));
 });
 
 // --- CSV Export ---
@@ -527,10 +548,40 @@ app.get('/api/stats', (req, res) => {
   const topCards = query("SELECT * FROM cards WHERE is_wishlist = 0 AND estimated_value > 0 ORDER BY estimated_value DESC LIMIT 10");
   const recentCards = query("SELECT * FROM cards WHERE is_wishlist = 0 ORDER BY created_at DESC LIMIT 5");
 
+  // Portfolio value over time — one point per day, sum of all card values
+  const portfolioHistory = query(`
+    SELECT DATE(looked_up_at) as date, SUM(ph.estimated_value) as value
+    FROM price_history ph
+    JOIN cards c ON c.id = ph.card_id
+    WHERE c.is_wishlist = 0
+    GROUP BY DATE(looked_up_at)
+    ORDER BY date ASC
+    LIMIT 90
+  `);
+
+  // Top movers — cards with the biggest $ change between first and last lookup
+  const movers = query(`
+    SELECT c.id, c.player_name, c.team, c.year, c.set_name, c.parallel, c.image_path,
+           first_ph.estimated_value as value_first,
+           last_ph.estimated_value as value_last,
+           (last_ph.estimated_value - first_ph.estimated_value) as change
+    FROM cards c
+    JOIN price_history first_ph ON first_ph.id = (
+      SELECT id FROM price_history WHERE card_id = c.id ORDER BY looked_up_at ASC LIMIT 1
+    )
+    JOIN price_history last_ph ON last_ph.id = (
+      SELECT id FROM price_history WHERE card_id = c.id ORDER BY looked_up_at DESC LIMIT 1
+    )
+    WHERE c.is_wishlist = 0 AND first_ph.id != last_ph.id
+    ORDER BY ABS(change) DESC
+    LIMIT 5
+  `);
+
   res.json({
     total: total.count, totalValue: tv.total,
     duplicates: dupes.count, wishlist: wish.count, graded: graded.count,
-    bySport, byBrand, topCards, recentCards
+    bySport, byBrand, topCards, recentCards,
+    portfolioHistory, movers,
   });
 });
 
