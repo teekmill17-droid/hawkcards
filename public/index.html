@@ -230,9 +230,8 @@
           <div class="preview-grid" id="preview-grid"></div>
           <div class="scan-actions">
             <button class="btn-primary" onclick="processScans()">
-              <span class="btn-icon">🤖</span> AI Recognize <span id="scan-count"></span>
+              <span class="btn-icon">🦅</span> Analyze Cards <span id="scan-count"></span>
             </button>
-            <button class="btn-secondary" onclick="skipAI()">Skip AI</button>
             <button class="btn-secondary" onclick="clearScans()">Clear</button>
           </div>
           <div id="bulk-more" style="display:none" class="bulk-more-btns">
@@ -241,25 +240,7 @@
           </div>
         </div>
 
-        <!-- Single card review (shown after AI recognition) -->
-        <div id="scan-review-single" style="display:none">
-          <div class="review-card">
-            <img id="review-img" src="" alt="" class="review-card-img">
-            <div class="review-card-info">
-              <p class="review-player" id="review-player"></p>
-              <p class="review-meta" id="review-meta"></p>
-              <p class="review-ebay" id="review-ebay"></p>
-              <p class="review-ebay-label" id="review-ebay-label"></p>
-              <div class="review-actions">
-                <button class="btn-primary" onclick="quickSaveCard()">Add to Collection</button>
-                <button class="btn-secondary" onclick="editReviewCard()">Edit Details</button>
-              </div>
-            </div>
-          </div>
-          <button class="btn-secondary" onclick="resetScan()" style="width:100%;margin-top:10px">← Scan Another</button>
-        </div>
-
-        <!-- Bulk review (shown after batch AI processing) -->
+        <!-- Bulk review (shown after batch processing) -->
         <div id="scan-review-bulk" style="display:none">
           <p class="review-bulk-title" id="review-bulk-count"></p>
           <div id="bulk-review-list" class="bulk-review-list"></div>
@@ -290,12 +271,22 @@
         <h2 class="section-title">Settings</h2>
         <div class="settings-form">
           <div class="field full">
-            <label>eBay App ID</label>
-            <p class="field-help">Free — required for eBay price lookups. Get one at <a href="https://developer.ebay.com" target="_blank">developer.ebay.com</a> → Create Account → My Keys → App ID (Production)</p>
+            <label>🤖 Gemini API Key <span class="settings-badge">AI Recognition</span></label>
+            <p class="field-help">Free — powers automatic card scanning (player, year, brand, parallel, everything). Get one at <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com</a> → Create API Key. No credit card needed.</p>
+            <input type="text" id="gemini-key-input" placeholder="AIzaSy...">
+          </div>
+          <div class="field full" id="gemini-status"></div>
+          <button class="btn-primary" onclick="saveGeminiKey()" style="margin-bottom:8px">Save Gemini Key</button>
+
+          <hr class="settings-divider">
+
+          <div class="field full">
+            <label>🏷 eBay App ID <span class="settings-badge">Price Lookup</span></label>
+            <p class="field-help">Free — shows real sold prices from eBay. Get one at <a href="https://developer.ebay.com" target="_blank">developer.ebay.com</a> → Create Account → My Keys → App ID (Production)</p>
             <input type="text" id="ebay-appid-input" placeholder="YourName-AppName-PRD-...">
           </div>
           <div class="field full" id="api-status"></div>
-          <button class="btn-primary" onclick="saveEbayId()">Save App ID</button>
+          <button class="btn-primary" onclick="saveEbayId()">Save eBay App ID</button>
         </div>
       </div>
     </div>

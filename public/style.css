@@ -660,6 +660,12 @@ body {
 
 /* Settings form */
 .settings-form { display: flex; flex-direction: column; gap: 14px; }
+.settings-divider { border: none; border-top: 1px solid var(--border); margin: 4px 0; }
+.settings-badge {
+  display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+  background: var(--accent-bg); color: var(--accent); border: 1px solid var(--accent-border);
+  border-radius: 4px; padding: 2px 6px; margin-left: 6px; vertical-align: middle; text-transform: uppercase;
+}
 
 /* ========== REVIEW PANELS ========== */
 .review-card {

@@ -18,6 +18,11 @@ function getEbayAppId() {
   return process.env.EBAY_APP_ID || (row ? row.value : null);
 }
 
+function getGeminiKey() {
+  const row = queryOne("SELECT value FROM settings WHERE key = 'gemini_api_key'");
+  return process.env.GEMINI_API_KEY || (row ? row.value : null);
+}
+
 // Middleware
 app.use(express.json({ limit: '50mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
@@ -43,7 +48,7 @@ const upload = multer({ storage, limits: { fileSize: 20 * 1024 * 1024 } });
 
 // --- Settings ---
 app.get('/api/settings', (req, res) => {
-  res.json({ hasEbayAppId: !!getEbayAppId() });
+  res.json({ hasEbayAppId: !!getEbayAppId(), hasGeminiKey: !!getGeminiKey() });
 });
 
 app.post('/api/settings/ebay', (req, res) => {
@@ -51,6 +56,90 @@ app.post('/api/settings/ebay', (req, res) => {
   if (!appId) return res.status(400).json({ error: 'App ID required' });
   run("INSERT OR REPLACE INTO settings (key, value) VALUES ('ebay_app_id', ?)", [appId]);
   res.json({ success: true });
+});
+
+app.post('/api/settings/gemini', (req, res) => {
+  const { apiKey } = req.body;
+  if (!apiKey) return res.status(400).json({ error: 'API key required' });
+  run("INSERT OR REPLACE INTO settings (key, value) VALUES ('gemini_api_key', ?)", [apiKey]);
+  res.json({ success: true });
+});
+
+// --- AI Card Recognition (Google Gemini — free tier) ---
+app.post('/api/recognize', async (req, res) => {
+  const apiKey = getGeminiKey();
+  if (!apiKey) return res.status(400).json({ error: 'Gemini API key not set. Go to Settings.' });
+
+  const { imagePath } = req.body;
+  if (!imagePath) return res.status(400).json({ error: 'imagePath required' });
+
+  const filename = imagePath.replace('/uploads/', '');
+  const filePath = path.join(uploadsDir, filename);
+  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Image not found' });
+
+  const imageData = fs.readFileSync(filePath);
+  const base64 = imageData.toString('base64');
+  const ext = path.extname(filePath).toLowerCase();
+  const mimeType = ext === '.png' ? 'image/png' : 'image/jpeg';
+
+  const prompt = `You are a sports trading card expert. Analyze this card image and extract every visible detail. Return ONLY a valid JSON object — no markdown, no explanation, just JSON.
+
+{
+  "player_name": "First Last",
+  "team": "Team Name",
+  "year": 2021,
+  "sport": "Baseball",
+  "brand": "Topps",
+  "card_number": "500",
+  "set_name": "2021 Topps Chrome",
+  "subset": "insert or subset name, or null",
+  "parallel": "e.g. Prizm Silver, Gold Refractor, Blue /150, or null if base",
+  "is_rookie": false,
+  "condition_notes": "any visible damage or wear, or null",
+  "confidence": "high"
+}
+
+Rules:
+- sport: exactly "Baseball", "Football", or "Basketball"
+- brand examples: Topps, Panini, Upper Deck, Bowman, Fleer, Donruss, Score, Leaf
+- set_name: full set name e.g. "2021 Topps Chrome", "2022 Panini Prizm"
+- parallel: be specific — "Prizm Silver", "Prizm Gold", "Prizm Holo", "Refractor", "Blue Refractor /150", "Gold /50". Use null if standard base card
+- is_rookie: true only if the card explicitly says RC, Rookie, or Rookie Card
+- confidence: "high" if clearly readable, "medium" if partially visible, "low" if unclear
+- Use null for any field you cannot determine from the image`;
+
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [
+            { inline_data: { mime_type: mimeType, data: base64 } },
+            { text: prompt }
+          ]}],
+          generationConfig: { temperature: 0.1, maxOutputTokens: 512 }
+        })
+      }
+    );
+
+    if (!response.ok) {
+      const err = await response.json();
+      const msg = err?.error?.message || `Gemini error: ${response.status}`;
+      return res.status(400).json({ error: msg });
+    }
+
+    const data = await response.json();
+    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return res.status(400).json({ error: 'Could not parse card data from image' });
+
+    res.json(JSON.parse(jsonMatch[0]));
+  } catch (e) {
+    console.error('Gemini recognize error:', e);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // --- Cards CRUD ---
