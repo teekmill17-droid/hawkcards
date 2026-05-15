@@ -98,7 +98,13 @@
         <div class="form-card">
           <div id="form-image-preview" class="form-image-preview" style="display:none">
             <img id="form-preview-img" src="" alt="">
-            <button onclick="removeFormImage()" class="remove-img-btn">✕ Remove</button>
+            <div class="form-img-actions">
+              <label class="change-img-btn">📷 Change Photo<input type="file" id="form-replace-img" accept="image/*" style="display:none" onchange="replaceFormImage(this)"></label>
+              <button onclick="removeFormImage()" class="remove-img-btn">✕ Remove</button>
+            </div>
+          </div>
+          <div id="form-no-image" class="form-no-image">
+            <label class="add-img-btn">📷 Add Photo<input type="file" id="form-add-img" accept="image/*" style="display:none" onchange="replaceFormImage(this)"></label>
           </div>
 
           <div class="form-grid">
