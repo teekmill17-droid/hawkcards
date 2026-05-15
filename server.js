@@ -223,9 +223,12 @@ Return ONLY a JSON object, no markdown:
         const lookup = await ai.messages.create({
           model: 'claude-sonnet-4-20250514', max_tokens: 1000,
           tools: [{ type: 'web_search_20250305', name: 'web_search' }],
-          messages: [{ role: 'user', content: `Find the current market value of: ${q}
-Check eBay sold listings, Beckett, PSA, COMC, price guides.
-Return ONLY JSON: {"estimated_value":0,"value_range_low":0,"value_range_high":0,"recent_sales":"","set_info":"","notable_details":"","source":""}` }]
+          messages: [{ role: 'user', content: `Search eBay COMPLETED/SOLD listings for this sports card: ${q}
+
+Find real recent sale prices (not active listings). Look for sold listings from the last 90 days.
+Calculate an average from the most recent sales.
+Return ONLY this JSON (no markdown):
+{"estimated_value":0,"value_range_low":0,"value_range_high":0,"recent_sales_count":0,"recent_sales_summary":"","source":"eBay Sold Listings"}` }]
         });
 
         const lt = lookup.content.map(b => b.text || '').join('');
@@ -294,9 +297,11 @@ app.post('/api/lookup', async (req, res) => {
     const lookup = await ai.messages.create({
       model: 'claude-sonnet-4-20250514', max_tokens: 1200,
       tools: [{ type: 'web_search_20250305', name: 'web_search' }],
-      messages: [{ role: 'user', content: `Search for the current market value of this sports card: ${q}
-Check eBay sold listings, PSA, Beckett, COMC, price guides.
-Return ONLY JSON: {"estimated_value":0,"value_range_low":0,"value_range_high":0,"recent_sales_summary":"","card_details":"","notable_info":"","sources":""}` }]
+      messages: [{ role: 'user', content: `Search eBay COMPLETED/SOLD listings for this sports card: ${q}
+
+Find real recent sale prices from eBay sold listings in the last 90 days (not active/asking prices).
+Return ONLY this JSON (no markdown):
+{"estimated_value":0,"value_range_low":0,"value_range_high":0,"recent_sales_count":0,"recent_sales_summary":"","notable_info":"","sources":"eBay Sold Listings"}` }]
     });
     const text = lookup.content.map(b => b.text || '').join('');
     let data;
