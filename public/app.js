@@ -679,6 +679,12 @@ async function processScans() {
         body: JSON.stringify({ imagePath: item.path })
       });
       const card = await res.json();
+      const parallel = [card.parallel, card.print_run ? `/${card.print_run}` : null].filter(Boolean).join(' ');
+      const notesParts = [];
+      if (card.is_rookie) notesParts.push('Rookie Card');
+      if (card.is_autograph) notesParts.push('Autograph');
+      if (card.is_patch) notesParts.push('Patch/Relic');
+      if (card.condition_notes) notesParts.push(card.condition_notes);
       bulkReviewCards.push({
         image_path: item.path,
         player_name: card.player_name || '',
@@ -689,9 +695,10 @@ async function processScans() {
         card_number: card.card_number || '',
         set_name: card.set_name || '',
         subset: card.subset || '',
-        parallel: card.parallel || '',
+        parallel: parallel || '',
         condition_grade: 'Near Mint',
         estimated_value: 0,
+        notes: notesParts.join(' · '),
         is_rookie: card.is_rookie || false,
         confidence: card.confidence || '',
       });
@@ -914,13 +921,38 @@ function fillFormFromCard(card) {
   set('f-card_number', card.card_number);
   set('f-set_name', card.set_name);
   set('f-subset', card.subset);
-  set('f-parallel', card.parallel);
+
+  // Combine parallel + print run
+  const parallel = [card.parallel, card.print_run ? `/${card.print_run}` : null]
+    .filter(Boolean).join(' ');
+  set('f-parallel', parallel || card.parallel);
+
   if (card.sport && ['Baseball', 'Football', 'Basketball'].includes(card.sport)) {
     document.getElementById('f-sport').value = card.sport;
   }
-  if (card.is_rookie) {
-    const notes = document.getElementById('f-notes');
-    if (notes && !notes.value) notes.value = 'Rookie Card';
+
+  // Auto-check graded if PSA grade detected
+  if (card.psa_grade) {
+    document.getElementById('f-is_graded').checked = true;
+    set('f-psa_grade', card.psa_grade);
+  }
+
+  // Build notes from special attributes
+  const notesParts = [];
+  if (card.is_rookie) notesParts.push('Rookie Card');
+  if (card.is_autograph) notesParts.push('Autograph');
+  if (card.is_patch) notesParts.push('Patch/Relic');
+  if (card.condition_notes) notesParts.push(card.condition_notes);
+  const notesEl = document.getElementById('f-notes');
+  if (notesEl && notesParts.length && !notesEl.value) {
+    notesEl.value = notesParts.join(' · ');
+  }
+
+  // Show toast with confidence
+  if (card.confidence === 'low') {
+    showToast('Low confidence — please review the filled fields', 'info');
+  } else if (card.confidence === 'medium') {
+    showToast('Card recognized — double-check the details', 'info');
   }
 }
 
