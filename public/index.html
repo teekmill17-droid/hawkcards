@@ -271,8 +271,18 @@
         <h2 class="section-title">Settings</h2>
         <div class="settings-form">
           <div class="field full">
-            <label>🤖 Groq API Key <span class="settings-badge">AI Recognition</span></label>
-            <p class="field-help">Free, fast, no credit card. Get one at <a href="https://console.groq.com/keys" target="_blank">console.groq.com</a> → Create API Key. Powers automatic card scanning — player, year, brand, parallel, everything.</p>
+            <label>🤖 Claude API Key <span class="settings-badge">AI Recognition</span></label>
+            <p class="field-help">Best option — ~$0.002 per scan (~$1 per 500 cards). Starts with $5 free credit. Get a key at <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a> → API Keys → Create Key.</p>
+            <input type="text" id="anthropic-key-input" placeholder="sk-ant-...">
+          </div>
+          <div class="field full" id="anthropic-status"></div>
+          <button class="btn-primary" onclick="saveAnthropicKey()" style="margin-bottom:8px">Save Claude Key</button>
+
+          <hr class="settings-divider">
+
+          <div class="field full">
+            <label>🤖 Groq API Key <span class="settings-badge">AI (Free fallback)</span></label>
+            <p class="field-help">Free but less accurate. Get one at <a href="https://console.groq.com/keys" target="_blank">console.groq.com</a> → Create API Key.</p>
             <input type="text" id="groq-key-input" placeholder="gsk_...">
           </div>
           <div class="field full" id="groq-status"></div>
