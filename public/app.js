@@ -54,8 +54,8 @@ async function checkSettings() {
   try {
     const res = await fetch('/api/settings');
     const data = await res.json();
-    if (!data.hasApiKey) {
-      // Show subtle hint, don't force
+    if (!data.hasEbayAppId) {
+      // subtle hint only — don't force modal
     }
   } catch (e) {}
 }
@@ -69,22 +69,21 @@ function closeSettings() {
   document.getElementById('settings-modal').style.display = 'none';
 }
 
-async function saveApiKey() {
-  const key = document.getElementById('api-key-input').value.trim();
-  if (!key) return;
-
+async function saveEbayId() {
+  const appId = document.getElementById('ebay-appid-input').value.trim();
+  if (!appId) return;
   try {
-    const res = await fetch('/api/settings/apikey', {
+    const res = await fetch('/api/settings/ebay', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ apiKey: key })
+      body: JSON.stringify({ appId })
     });
     if (res.ok) {
-      showToast('API key saved!', 'success');
-      document.getElementById('api-status').innerHTML = '<p style="color:var(--green)">✓ Key saved</p>';
+      showToast('eBay App ID saved!', 'success');
+      document.getElementById('api-status').innerHTML = '<p style="color:var(--green)">✓ Saved — price lookups ready</p>';
     }
   } catch (e) {
-    showToast('Failed to save key', 'error');
+    showToast('Failed to save App ID', 'error');
   }
 }
 
@@ -365,10 +364,10 @@ async function lookupValue() {
   const data = getFormData();
   if (!data.player_name) { showToast('Enter a player name first', 'error'); return; }
 
-  showAI('Looking Up Value...', 'Searching card databases...', 'Checking eBay, Beckett, PSA & more');
+  showAI('Searching eBay...', 'Checking sold listings...', 'Finding real recent sale prices');
 
   try {
-    const res = await fetch('/api/lookup', {
+    const res = await fetch('/api/ebay-price', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
@@ -376,31 +375,20 @@ async function lookupValue() {
     const result = await res.json();
     hideAI();
 
-    if (result.error) {
-      showToast(result.error, 'error');
-      return;
-    }
+    if (result.error) { showToast(result.error, 'error'); return; }
 
-    if (result.estimated_value) {
+    if (result.estimated_value > 0) {
       document.getElementById('f-estimated_value').value = result.estimated_value;
-    }
-
-    let info = [];
-    if (result.recent_sales_summary) info.push(`Recent Sales: ${result.recent_sales_summary}`);
-    if (result.card_details) info.push(`Details: ${result.card_details}`);
-    if (result.notable_info) info.push(`Note: ${result.notable_info}`);
-    if (result.value_range_low && result.value_range_high) {
-      info.push(`Range: $${result.value_range_low} — $${result.value_range_high}`);
-    }
-
-    if (info.length) {
-      showToast(`Value: $${result.estimated_value || '?'} — ${info[0].substring(0, 60)}`, 'success');
+      const range = result.value_range_low && result.value_range_high
+        ? ` (range $${result.value_range_low}–$${result.value_range_high})`
+        : '';
+      showToast(`eBay avg: $${result.estimated_value}${range} · ${result.recent_sales_count} sold`, 'success');
     } else {
-      showToast(`Estimated value: $${result.estimated_value || 'unknown'}`, 'info');
+      showToast(result.message || 'No recent eBay sales found', 'info');
     }
   } catch (e) {
     hideAI();
-    showToast('Lookup failed — check your API key in Settings', 'error');
+    showToast('Lookup failed — add your eBay App ID in Settings', 'error');
   }
 }
 
@@ -408,10 +396,10 @@ async function lookupDetailValue(id) {
   closeDetail();
   const card = await (await fetch(`/api/cards/${id}`)).json();
 
-  showAI('Looking Up Value...', `Searching for ${card.player_name}...`, 'Checking eBay, Beckett, PSA & more');
+  showAI('Searching eBay...', `Looking up ${card.player_name}...`, 'Finding real recent sale prices');
 
   try {
-    const res = await fetch('/api/lookup', {
+    const res = await fetch('/api/ebay-price', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(card)
@@ -421,22 +409,22 @@ async function lookupDetailValue(id) {
 
     if (result.error) { showToast(result.error, 'error'); return; }
 
-    if (result.estimated_value) {
+    if (result.estimated_value > 0) {
       card.estimated_value = result.estimated_value;
-      card.lookup_source = result.sources || 'AI Web Search';
+      card.lookup_source = 'eBay Sold Listings';
       await fetch(`/api/cards/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(card)
       });
-      showToast(`Value updated: $${result.estimated_value}`, 'success');
+      showToast(`eBay avg: $${result.estimated_value} · ${result.recent_sales_count} sold`, 'success');
       loadCards();
     } else {
-      showToast('Could not determine value', 'info');
+      showToast(result.message || 'No recent eBay sales found', 'info');
     }
   } catch (e) {
     hideAI();
-    showToast('Lookup failed', 'error');
+    showToast('Lookup failed — add your eBay App ID in Settings', 'error');
   }
 }
 
@@ -485,13 +473,13 @@ async function handleFileUpload(e) {
     } catch (err) { showToast('Upload failed', 'error'); return; }
     showScanPreview();
   } else {
-    // Single file — upload then immediately recognize
+    // Single file — upload then open form with image
     const formData = new FormData();
     formData.append('image', files[0]);
     try {
       const res = await fetch('/api/upload', { method: 'POST', body: formData });
       const result = await res.json();
-      await autoRecognizeCard(result.path);
+      openFormWithImage(result.path);
     } catch (err) { showToast('Upload failed', 'error'); }
   }
 }
@@ -567,7 +555,7 @@ async function capturePhoto() {
       showScanPreview();
     } else {
       stopCamera();
-      await autoRecognizeCard(result.path);
+      openFormWithImage(result.path);
     }
   } catch (e) {
     showToast('Capture failed', 'error');
@@ -612,30 +600,14 @@ function clearScans() {
 
 async function processScans() {
   if (!scanQueue.length) return;
-
-  showAI('Analyzing Cards...', `Processing ${scanQueue.length} card(s)...`, 'Identifying player, team, year, brand & set');
-
-  const images = scanQueue.map((item, i) => ({ imagePath: item.path, tempId: i.toString() }));
-
-  try {
-    const res = await fetch('/api/recognize/bulk', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ images })
-    });
-    const results = await res.json();
-    hideAI();
-
-    bulkReviewCards = results.map((r, i) => ({
-      ...r,
-      image_path: scanQueue[parseInt(r.tempId) || i]?.path || '',
-    }));
-
-    showBulkReview(bulkReviewCards);
-  } catch (e) {
-    hideAI();
-    showToast('Recognition failed — check API key in Settings', 'error');
-  }
+  // Build blank review cards — user fills details manually
+  bulkReviewCards = scanQueue.map(item => ({
+    image_path: item.path,
+    player_name: '', team: '', year: null, sport: 'Baseball',
+    brand: '', card_number: '', set_name: '', subset: '', parallel: '',
+    condition_grade: 'Near Mint', estimated_value: 0,
+  }));
+  showBulkReview(bulkReviewCards);
 }
 
 async function skipAI() {
@@ -783,110 +755,15 @@ function showToast(msg, type = 'success') {
 
 // ========== SCAN REVIEW ==========
 
-async function autoRecognizeCard(imagePath) {
-  showAI('Analyzing Card...', 'Reading card details...', 'Identifying player, year, brand & checking eBay prices');
-  try {
-    const res = await fetch('/api/recognize', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ imagePath })
-    });
-    const data = await res.json();
-    hideAI();
-    if (data.error) { showToast(data.error, 'error'); resetScan(); return; }
-    reviewCardData = { ...data, image_path: imagePath };
-    showSingleReview(reviewCardData);
-  } catch (e) {
-    hideAI();
-    showToast('Recognition failed — check API key in Settings', 'error');
-    resetScan();
-  }
-}
-
-function showSingleReview(card) {
-  document.getElementById('scan-start').style.display = 'none';
-  document.getElementById('camera-view').style.display = 'none';
-  document.getElementById('scan-preview').style.display = 'none';
-
-  document.getElementById('review-img').src = card.image_path;
-  document.getElementById('review-player').textContent = card.player_name || 'Unknown Player';
-  document.getElementById('review-meta').textContent =
-    [card.year, card.team, card.brand, card.set_name, card.parallel].filter(Boolean).join(' · ');
-
-  const priceEl = document.getElementById('review-ebay');
-  const labelEl = document.getElementById('review-ebay-label');
-  if (card.estimated_value > 0) {
-    priceEl.textContent = `$${Number(card.estimated_value).toLocaleString()}`;
-    labelEl.textContent = card.lookup_source || 'eBay Sold Listings';
-    priceEl.style.display = 'block';
-    labelEl.style.display = 'block';
-  } else {
-    priceEl.style.display = 'none';
-    labelEl.style.display = 'none';
-  }
-
-  document.getElementById('scan-review-single').style.display = 'block';
-}
-
-async function quickSaveCard() {
-  if (!reviewCardData) return;
-  const btn = document.querySelector('#scan-review-single .btn-primary');
-  if (btn) btn.disabled = true;
-  try {
-    await fetch('/api/cards', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        player_name: reviewCardData.player_name || '',
-        team: reviewCardData.team || '',
-        year: reviewCardData.year || null,
-        sport: reviewCardData.sport || 'Baseball',
-        brand: reviewCardData.brand || '',
-        card_number: reviewCardData.card_number || '',
-        set_name: reviewCardData.set_name || '',
-        subset: reviewCardData.subset || '',
-        parallel: reviewCardData.parallel || '',
-        condition_grade: reviewCardData.condition_grade || 'Near Mint',
-        estimated_value: reviewCardData.estimated_value || 0,
-        image_path: reviewCardData.image_path || '',
-        ai_confidence: reviewCardData.confidence || '',
-        lookup_source: reviewCardData.lookup_source || 'eBay Sold Listings',
-        notes: reviewCardData.is_rookie ? 'Rookie Card' : '',
-      })
-    });
-    showToast('Card added to collection!', 'success');
-    reviewCardData = null;
-    resetScan();
-    switchView('collection');
-  } catch (e) {
-    if (btn) btn.disabled = false;
-    showToast('Failed to save card', 'error');
-  }
-}
-
-function editReviewCard() {
-  if (!reviewCardData) return;
-  editingId = null;
-  currentImagePath = reviewCardData.image_path || '';
-  document.getElementById('form-title').textContent = 'Add Card';
-  document.getElementById('save-btn').textContent = 'Add to Collection';
-
-  ['player_name','team','year','brand','card_number','set_name','subset','parallel','psa_grade','estimated_value','purchase_price'].forEach(f => {
-    const el = document.getElementById(`f-${f}`);
-    if (el) el.value = reviewCardData[f] || '';
-  });
-  if (reviewCardData.sport) document.getElementById('f-sport').value = reviewCardData.sport;
-  if (reviewCardData.condition_grade) document.getElementById('f-condition_grade').value = reviewCardData.condition_grade;
-  document.getElementById('f-is_duplicate').checked = false;
-  document.getElementById('f-is_wishlist').checked = false;
-  document.getElementById('f-is_graded').checked = false;
-
-  if (currentImagePath) {
-    document.getElementById('form-image-preview').style.display = 'block';
-    document.getElementById('form-preview-img').src = currentImagePath;
-  }
+function openFormWithImage(imagePath) {
+  resetForm();
+  currentImagePath = imagePath;
+  document.getElementById('form-image-preview').style.display = 'block';
+  document.getElementById('form-preview-img').src = imagePath;
   resetScan();
   switchView('add');
+  // Focus player name so dad can start typing immediately
+  setTimeout(() => document.getElementById('f-player_name')?.focus(), 100);
 }
 
 function showBulkReview(cards) {
