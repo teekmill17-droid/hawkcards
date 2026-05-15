@@ -544,8 +544,17 @@ app.post('/api/ebay-price', async (req, res) => {
     res.json(payload);
   } catch (e) {
     console.error('eBay price error:', e.message);
-    res.status(500).json({ error: e.message });
+    const blocked = e.message.includes('403') || e.message.includes('blocked') || e.message.includes('CAPTCHA') || e.message.includes('captcha');
+    const msg = blocked
+      ? 'eBay is blocking automated lookups from this server. Use the Search Online links in the card detail to check prices manually, or add an eBay App ID in Settings for reliable lookups.'
+      : e.message;
+    res.status(500).json({ error: msg });
   }
+});
+
+app.get('/api/debug/storage', (req, res) => {
+  const files = fs.existsSync(uploadsDir) ? fs.readdirSync(uploadsDir).slice(0, 20) : [];
+  res.json({ DATA_DIR, uploadsDir, fileCount: files.length, files, IS_PROD });
 });
 
 app.get('/api/cards/:id/price-history', (req, res) => {
