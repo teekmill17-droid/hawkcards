@@ -70,9 +70,16 @@ async function checkSettings() {
   } catch (e) {}
 }
 
-function openSettings() {
+async function openSettings() {
   document.getElementById('dropdown-menu').classList.remove('open');
   document.getElementById('settings-modal').style.display = 'flex';
+  try {
+    const s = await fetch('/api/settings').then(r => r.json());
+    if (s.hasAnthropicKey) document.getElementById('anthropic-status').innerHTML = '<p style="color:var(--green);font-size:12px">✓ Claude key saved</p>';
+    if (s.hasGroqKey) document.getElementById('groq-status').innerHTML = '<p style="color:var(--green);font-size:12px">✓ Groq key saved</p>';
+    if (s.hasGeminiKey) document.getElementById('gemini-status').innerHTML = '<p style="color:var(--green);font-size:12px">✓ Gemini key saved — AI price lookup ready</p>';
+    if (s.hasEbayAppId) document.getElementById('api-status').innerHTML = '<p style="color:var(--green);font-size:12px">✓ eBay App ID saved</p>';
+  } catch (e) {}
 }
 
 function closeSettings() {
@@ -270,7 +277,7 @@ async function openDetail(id) {
           </div>
           <div class="detail-actions">
             <button class="detail-btn" onclick="editCard(${card.id})">✏️ Edit</button>
-            <button class="detail-btn accent" onclick="lookupDetailValue(${card.id})">🔍 Lookup Price</button>
+            <button class="detail-btn accent" onclick="lookupDetailValue(${card.id})">🤖 AI Price Check</button>
             <button class="detail-btn" onclick="setManualPrice(${card.id})">💲 Set Price</button>
             <button class="detail-btn" onclick="toggleDupe(${card.id}, ${card.is_duplicate})">${card.is_duplicate ? '✅ Undupe' : '🔁 Mark Dupe'}</button>
             <button class="detail-btn danger" onclick="deleteCard(${card.id})">🗑 Delete</button>
@@ -332,28 +339,6 @@ async function openDetail(id) {
           </div>
         ` : ''}
 
-        ${(() => {
-          // Build clean keyword — avoid doubling brand in set name (e.g. "Leaf" + "Leaf HYPE!")
-          const { player_name, year, brand, set_name, card_number, parallel } = card;
-          const setLower = (set_name || '').toLowerCase();
-          const brandLower = (brand || '').toLowerCase();
-          const setPart = set_name && brand && setLower.startsWith(brandLower) ? set_name : [brand, set_name].filter(Boolean).join(' ');
-          const q = [player_name, year, setPart, parallel, card_number ? `#${card_number}` : ''].filter(Boolean).join(' ');
-          const enc = encodeURIComponent(q);
-          const encName = encodeURIComponent(player_name || '');
-          return `
-            <div class="detail-section">
-              <p class="detail-section-title">Search Online</p>
-              <p class="detail-hint" style="margin-bottom:8px;font-size:11px">${esc(q)}</p>
-              <div class="search-links">
-                <a class="search-link-btn" href="https://www.ebay.com/sch/212/i.html?_nkw=${enc}&LH_Complete=1&LH_Sold=1&_sop=13" target="_blank">eBay Sold</a>
-                <a class="search-link-btn" href="https://sportscardspro.com/search?q=${enc}" target="_blank">SportsCardsPro</a>
-                <a class="search-link-btn" href="https://130point.com/sales/?search=${enc}" target="_blank">130point</a>
-                <a class="search-link-btn" href="https://www.comc.com/Cards?SearchQuery=${encName}" target="_blank">COMC</a>
-              </div>
-            </div>
-          `;
-        })()}
       </div>
     `;
 
@@ -678,7 +663,7 @@ async function lookupValue() {
     }
     hideAI();
 
-    if (result.error) { showToast('Lookup blocked — use Search Online below, then Set Price manually', 'info'); return; }
+    if (result.error) { showToast('No price data found — add a Gemini key in Settings for reliable lookup', 'info'); return; }
 
     if (result.estimated_value > 0) {
       document.getElementById('f-estimated_value').value = result.estimated_value;
@@ -715,7 +700,7 @@ async function lookupDetailValue(id) {
     hideAI();
 
     if (result.error) {
-      showToast('Auto lookup blocked — use Search Online links below, then tap Set Price', 'info');
+      showToast('No price data found — tap Set Price to enter manually, or add a Gemini key in Settings', 'info');
       return;
     }
 
