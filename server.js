@@ -133,7 +133,7 @@ async function recognizeWithGroq(apiKey, base64, mimeType) {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: 'meta-llama/llama-4-maverick-17b-128e-instruct',
+      model: 'llama-3.2-90b-vision-preview',
       messages: [{ role: 'user', content: [
         { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}` } },
         { type: 'text', text: CARD_PROMPT }
