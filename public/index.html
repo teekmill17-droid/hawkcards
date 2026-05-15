@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HawkCollects2317</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=Syne:wght@700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦅</text></svg>">
+</head>
+<body>
+  <div id="app">
+    <!-- Header -->
+    <header id="header">
+      <div class="header-glow"></div>
+      <div class="header-inner">
+        <div class="header-left">
+          <div class="logo-wrap">
+            <h1 class="logo">HAWKCOLLECTS</h1>
+            <span class="logo-num">2317</span>
+          </div>
+          <div class="header-stats">
+            <span class="stat-pill" id="stat-count">0 cards</span>
+            <span class="stat-pill" id="stat-value">$0</span>
+          </div>
+        </div>
+        <div class="header-actions">
+          <button class="icon-btn" onclick="openScan()" title="Scan Cards">
+            <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+          </button>
+          <button class="icon-btn" onclick="toggleMenu()" title="Menu" id="menu-btn">
+            <svg width="20" height="20" fill="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+          </button>
+          <div class="dropdown-menu" id="dropdown-menu">
+            <button onclick="exportCSV()">📥 Export CSV</button>
+            <button onclick="openSettings()">⚙️ Settings</button>
+            <hr>
+            <button onclick="resetAll()" class="danger">🗑 Reset Collection</button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- Navigation -->
+    <nav id="nav">
+      <button class="nav-btn active" data-view="collection" onclick="switchView('collection')">
+        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+        <span>Collection</span>
+      </button>
+      <button class="nav-btn" data-view="add" onclick="switchView('add')">
+        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        <span>Add</span>
+      </button>
+      <button class="nav-btn" data-view="scan" onclick="switchView('scan')">
+        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+        <span>Scan</span>
+      </button>
+      <button class="nav-btn" data-view="stats" onclick="switchView('stats')">
+        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+        <span>Stats</span>
+      </button>
+    </nav>
+
+    <!-- Main Content -->
+    <main id="main">
+      <!-- Collection View -->
+      <section id="view-collection" class="view active">
+        <div class="search-bar">
+          <svg class="search-icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input type="text" id="search-input" placeholder="Search player, team, brand, set..." oninput="loadCards()">
+          <button class="clear-search" id="clear-search" onclick="clearSearch()" style="display:none">✕</button>
+        </div>
+
+        <div class="filter-row">
+          <div class="filter-chips" id="sport-filters"></div>
+          <select id="sort-select" onchange="loadCards()">
+            <option value="newest">Newest</option>
+            <option value="oldest">Oldest</option>
+            <option value="value-high">Value ↓</option>
+            <option value="value-low">Value ↑</option>
+            <option value="year">Year</option>
+            <option value="name">Name</option>
+          </select>
+        </div>
+
+        <div id="cards-grid" class="cards-grid"></div>
+        <div id="empty-state" class="empty-state" style="display:none">
+          <div class="empty-icon">🦅</div>
+          <p class="empty-title">No cards yet, Hawkeye</p>
+          <p class="empty-sub">Scan or add your first card to get started</p>
+        </div>
+      </section>
+
+      <!-- Add/Edit View -->
+      <section id="view-add" class="view">
+        <h2 class="section-title" id="form-title">Add Card</h2>
+        <div class="form-card">
+          <div id="form-image-preview" class="form-image-preview" style="display:none">
+            <img id="form-preview-img" src="" alt="">
+            <button onclick="removeFormImage()" class="remove-img-btn">✕ Remove</button>
+          </div>
+
+          <div class="form-grid">
+            <div class="field full">
+              <label>Player Name <span class="req">*</span></label>
+              <input type="text" id="f-player_name" placeholder="e.g. Mike Trout">
+            </div>
+            <div class="field">
+              <label>Team</label>
+              <input type="text" id="f-team" placeholder="e.g. Angels">
+            </div>
+            <div class="field">
+              <label>Sport</label>
+              <select id="f-sport">
+                <option>Baseball</option>
+                <option>Football</option>
+                <option>Basketball</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Year</label>
+              <input type="number" id="f-year" placeholder="1989">
+            </div>
+            <div class="field">
+              <label>Brand</label>
+              <input type="text" id="f-brand" placeholder="Topps, Panini...">
+            </div>
+            <div class="field">
+              <label>Card #</label>
+              <input type="text" id="f-card_number" placeholder="e.g. 500">
+            </div>
+            <div class="field">
+              <label>Set</label>
+              <input type="text" id="f-set_name" placeholder="e.g. Topps Chrome">
+            </div>
+            <div class="field">
+              <label>Subset / Insert</label>
+              <input type="text" id="f-subset" placeholder="e.g. All-Stars">
+            </div>
+            <div class="field">
+              <label>Parallel</label>
+              <input type="text" id="f-parallel" placeholder="e.g. Refractor">
+            </div>
+            <div class="field">
+              <label>Condition</label>
+              <select id="f-condition_grade">
+                <option>Gem Mint</option>
+                <option>Mint</option>
+                <option>NM-MT</option>
+                <option selected>Near Mint</option>
+                <option>EX-MT</option>
+                <option>Excellent</option>
+                <option>VG-EX</option>
+                <option>Very Good</option>
+                <option>Good</option>
+                <option>Poor</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>PSA / BGS Grade</label>
+              <input type="text" id="f-psa_grade" placeholder="e.g. PSA 9">
+            </div>
+            <div class="field">
+              <label>Est. Value ($)</label>
+              <input type="number" step="0.01" id="f-estimated_value" placeholder="0.00">
+            </div>
+            <div class="field">
+              <label>Purchase Price ($)</label>
+              <input type="number" step="0.01" id="f-purchase_price" placeholder="0.00">
+            </div>
+            <div class="field full">
+              <label>Notes</label>
+              <textarea id="f-notes" placeholder="Any details, grading info..."></textarea>
+            </div>
+            <div class="field full checkboxes">
+              <label class="check-label"><input type="checkbox" id="f-is_duplicate"> Duplicate / Trade Bait</label>
+              <label class="check-label"><input type="checkbox" id="f-is_wishlist"> Wishlist (don't own yet)</label>
+              <label class="check-label"><input type="checkbox" id="f-is_graded"> Professionally Graded</label>
+            </div>
+          </div>
+
+          <div class="form-actions">
+            <button class="btn-primary" onclick="saveCard()" id="save-btn">Add to Collection</button>
+            <button class="btn-secondary" onclick="cancelForm()">Cancel</button>
+            <button class="btn-lookup" onclick="lookupValue()" id="lookup-btn" title="Search card databases for value">🔍 Lookup Value</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Scan View -->
+      <section id="view-scan" class="view">
+        <div class="scan-header">
+          <h2 class="section-title">Scan Cards</h2>
+          <button class="bulk-toggle" id="bulk-toggle" onclick="toggleBulk()">⚡ Bulk Mode</button>
+        </div>
+
+        <div id="scan-start" class="scan-options">
+          <button class="scan-option" onclick="startCamera()">
+            <svg width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+            <span class="scan-option-title">Camera</span>
+            <span class="scan-option-sub">Use your webcam</span>
+          </button>
+          <button class="scan-option" onclick="triggerUpload()">
+            <svg width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            <span class="scan-option-title">Upload</span>
+            <span class="scan-option-sub" id="upload-sub">Select photos</span>
+          </button>
+          <input type="file" id="file-input" accept="image/*" style="display:none" onchange="handleFileUpload(event)">
+        </div>
+
+        <div id="camera-view" style="display:none">
+          <div class="camera-container">
+            <video id="video" autoplay playsinline webkit-playsinline muted></video>
+            <canvas id="canvas" style="display:none"></canvas>
+            <div class="camera-overlay">
+              <div class="camera-frame"></div>
+            </div>
+          </div>
+          <div class="camera-controls">
+            <button class="btn-secondary" onclick="stopCamera()">Cancel</button>
+            <button class="capture-btn" onclick="capturePhoto()">
+              <div class="capture-inner"></div>
+            </button>
+            <button class="btn-secondary" onclick="triggerUpload()">Upload</button>
+          </div>
+        </div>
+
+        <div id="scan-preview" style="display:none">
+          <div class="preview-grid" id="preview-grid"></div>
+          <div class="scan-actions">
+            <button class="btn-primary" onclick="processScans()">
+              <span class="btn-icon">🤖</span> AI Recognize <span id="scan-count"></span>
+            </button>
+            <button class="btn-secondary" onclick="skipAI()">Skip AI</button>
+            <button class="btn-secondary" onclick="clearScans()">Clear</button>
+          </div>
+          <div id="bulk-more" style="display:none" class="bulk-more-btns">
+            <button class="btn-outline" onclick="startCamera()">📷 Add More</button>
+            <button class="btn-outline" onclick="triggerUpload()">📁 Upload More</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Stats View -->
+      <section id="view-stats" class="view">
+        <h2 class="section-title">Collection Stats</h2>
+        <div id="stats-content"></div>
+      </section>
+    </main>
+
+    <!-- Detail Modal -->
+    <div id="detail-modal" class="modal" style="display:none">
+      <div class="modal-backdrop" onclick="closeDetail()"></div>
+      <div class="modal-content" id="detail-content"></div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div id="settings-modal" class="modal" style="display:none">
+      <div class="modal-backdrop" onclick="closeSettings()"></div>
+      <div class="modal-content modal-sm">
+        <h2 class="section-title">Settings</h2>
+        <div class="settings-form">
+          <div class="field full">
+            <label>Anthropic API Key</label>
+            <p class="field-help">Required for AI card recognition and value lookup. Get one at <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a></p>
+            <input type="password" id="api-key-input" placeholder="sk-ant-...">
+          </div>
+          <div class="field full" id="api-status"></div>
+          <button class="btn-primary" onclick="saveApiKey()">Save Key</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- AI Processing Overlay -->
+    <div id="ai-overlay" class="ai-overlay" style="display:none">
+      <div class="ai-modal">
+        <div class="ai-spinner"></div>
+        <p class="ai-title" id="ai-title">Analyzing Card...</p>
+        <p class="ai-sub" id="ai-sub">Reading card details</p>
+        <div class="progress-track"><div class="progress-fill" id="ai-progress"></div></div>
+        <p class="ai-hint" id="ai-hint">Identifying player, team, year, brand & value</p>
+      </div>
+    </div>
+
+    <!-- Toast -->
+    <div id="toast" class="toast" style="display:none"></div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
