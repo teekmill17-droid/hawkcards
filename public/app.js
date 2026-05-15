@@ -682,7 +682,7 @@ async function lookupValue() {
 
 async function lookupDetailValue(id) {
   const card = await (await fetch(`/api/cards/${id}`)).json();
-  showAI('Looking up price...', `Checking for ${card.player_name}...`, 'Searching eBay sold listings...');
+  showAI('Checking price...', `Searching for ${card.player_name}...`, 'Trying eBay, 130point, SportsCardsPro, AI estimate...');
 
   try {
     // Try browser-side fetch first (bypasses Railway IP block)
@@ -717,18 +717,21 @@ async function lookupDetailValue(id) {
           recent_sales: result.recent_sales,
         })
       });
-      const range = result.value_range_low && result.value_range_high
+      const isEstimate = result.source === 'AI Estimate';
+      const range = result.value_range_low && result.value_range_high && !isEstimate
         ? ` ($${result.value_range_low}–$${result.value_range_high})`
-        : '';
-      showToast(`${result.source}: $${result.estimated_value}${range} · ${result.recent_sales_count} sold`, 'success');
+        : isEstimate ? ` (~$${result.value_range_low}–$${result.value_range_high})` : '';
+      const soldInfo = result.recent_sales_count > 0 ? ` · ${result.recent_sales_count} sold` : '';
+      const toastType = isEstimate ? 'info' : 'success';
+      showToast(`${result.source}: $${result.estimated_value}${range}${soldInfo}`, toastType);
       loadCards();
       openDetail(id);
     } else {
-      showToast(result.message || 'No sales found', 'info');
+      showToast(result.message || 'No price data found', 'info');
     }
   } catch (e) {
     hideAI();
-    showToast('Lookup failed — try adding a free Gemini key in Settings', 'info');
+    showToast('Lookup failed — add a Gemini key in Settings for reliable lookup', 'info');
   }
 }
 
