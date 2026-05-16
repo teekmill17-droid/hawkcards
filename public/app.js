@@ -299,25 +299,20 @@ async function openDetail(id) {
           ${card.notes ? `<div class="detail-notes">${esc(card.notes)}</div>` : ''}
         </div>
 
-        ${history.length > 1 ? `
+        ${history.length ? `
           <div class="detail-section">
-            <p class="detail-section-title">Price History <span class="detail-section-count">${history.length} lookups</span></p>
+            <p class="detail-section-title">Price History <span class="detail-section-count">${history.length} lookup${history.length !== 1 ? 's' : ''}</span></p>
             <div class="price-chart-wrap">${buildPriceChart(history)}</div>
-            <div class="price-history-list">
+            ${history.length > 1 ? `<div class="price-history-list" style="margin-top:10px">
               ${history.slice(-5).reverse().map(h => `
                 <div class="ph-row">
                   <span class="ph-date">${h.looked_up_at.slice(0,10)}</span>
                   <span class="ph-val">$${Number(h.estimated_value).toFixed(2)}</span>
-                  <span class="ph-range">${h.value_range_low > 0 ? `$${h.value_range_low}–$${h.value_range_high}` : ''}</span>
+                  <span class="ph-range">${h.value_range_low > 0 ? `$${h.value_range_low}–$${h.value_range_high}` : h.source || ''}</span>
                   <span class="ph-count">${h.recent_sales_count > 0 ? `${h.recent_sales_count} sold` : ''}</span>
                 </div>
               `).join('')}
-            </div>
-          </div>
-        ` : history.length === 1 ? `
-          <div class="detail-section">
-            <p class="detail-section-title">Price History</p>
-            <p class="detail-hint">1 lookup so far — check again later to see trend</p>
+            </div>` : ''}
           </div>
         ` : ''}
 
@@ -354,35 +349,53 @@ function detailField(label, value) {
 }
 
 function buildPriceChart(history) {
-  if (history.length < 2) return '';
-  const W = 320, H = 80, pad = { t: 8, r: 8, b: 20, l: 40 };
-  const cw = W - pad.l - pad.r, ch = H - pad.t - pad.b;
+  if (!history.length) return '';
+  const fmt = v => v >= 1000 ? `$${(v/1000).toFixed(1)}k` : `$${Number(v).toFixed(2)}`;
   const vals = history.map(h => h.estimated_value);
-  const minV = Math.min(...vals), maxV = Math.max(...vals);
-  const range = maxV - minV || 1;
-  const pts = history.map((h, i) => {
-    const x = pad.l + (i / (history.length - 1)) * cw;
-    const y = pad.t + ch - ((h.estimated_value - minV) / range) * ch;
-    return `${x},${y}`;
-  });
-  const area = `${pad.l},${pad.t + ch} ${pts.join(' ')} ${pad.l + cw},${pad.t + ch}`;
-  const first = pts[0].split(','), last = pts[pts.length - 1].split(',');
-  const change = vals[vals.length - 1] - vals[0];
+  const last = vals[vals.length - 1];
+  const first = vals[0];
+  const change = last - first;
+  const changePct = first > 0 ? ((change / first) * 100).toFixed(1) : null;
   const color = change >= 0 ? '#34d399' : '#ef4444';
-  return `<svg viewBox="0 0 ${W} ${H}" class="price-chart-svg">
+  const changeLabel = changePct !== null
+    ? `<span style="font-size:12px;font-weight:700;color:${color};background:${color}1a;padding:2px 10px;border-radius:6px">${change >= 0 ? '+' : ''}${changePct}%</span>`
+    : '';
+  const header = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+    <span style="font-size:22px;font-weight:800;color:${color}">${fmt(last)}</span>${changeLabel}</div>`;
+
+  if (history.length === 1) {
+    return header + `<p style="font-size:11px;color:var(--text-4)">First lookup ${history[0].looked_up_at.slice(0,10)} · check again later to track trend</p>`;
+  }
+
+  const W = 320, H = 100, pad = { t: 10, r: 10, b: 22, l: 44 };
+  const cw = W - pad.l - pad.r, ch = H - pad.t - pad.b;
+  const minV = Math.min(...vals) * 0.93, maxV = Math.max(...vals) * 1.07;
+  const range = maxV - minV || 1;
+  const pts = history.map((h, i) => ({
+    x: pad.l + (i / (history.length - 1)) * cw,
+    y: pad.t + ch - ((h.estimated_value - minV) / range) * ch,
+    val: h.estimated_value,
+    date: h.looked_up_at.slice(0, 10),
+  }));
+  const ptStr = pts.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
+  const areaStr = `${pad.l},${pad.t + ch} ${ptStr} ${pad.l + cw},${pad.t + ch}`;
+  const idxs = [0, Math.round((history.length - 1) / 2), history.length - 1].filter((v, i, a) => a.indexOf(v) === i);
+  const dateLabels = idxs.map(i => `<text x="${pts[i].x.toFixed(1)}" y="${H - 2}" font-size="8" fill="rgba(255,255,255,0.28)" text-anchor="middle">${pts[i].date.slice(5)}</text>`).join('');
+  const dots = pts.map(p => `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="3" fill="${color}" stroke="var(--bg)" stroke-width="1.5"><title>${fmt(p.val)} · ${p.date}</title></circle>`).join('');
+
+  return header + `<svg viewBox="0 0 ${W} ${H}" class="price-chart-svg">
     <defs>
       <linearGradient id="cg" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="${color}" stop-opacity="0.25"/>
+        <stop offset="0%" stop-color="${color}" stop-opacity="0.2"/>
         <stop offset="100%" stop-color="${color}" stop-opacity="0"/>
       </linearGradient>
     </defs>
-    <polygon points="${area}" fill="url(#cg)"/>
-    <polyline points="${pts.join(' ')}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
-    <circle cx="${last[0]}" cy="${last[1]}" r="3.5" fill="${color}"/>
-    <text x="${pad.l - 4}" y="${Number(pad.t) + Number(ch) + 1}" font-size="9" fill="rgba(255,255,255,0.35)" text-anchor="end">$${minV.toFixed(0)}</text>
-    <text x="${pad.l - 4}" y="${pad.t + 8}" font-size="9" fill="rgba(255,255,255,0.35)" text-anchor="end">$${maxV.toFixed(0)}</text>
-    <text x="${first[0]}" y="${H}" font-size="8" fill="rgba(255,255,255,0.3)" text-anchor="middle">${history[0].looked_up_at.slice(5,10)}</text>
-    <text x="${last[0]}" y="${H}" font-size="8" fill="rgba(255,255,255,0.3)" text-anchor="middle">${history[history.length-1].looked_up_at.slice(5,10)}</text>
+    <polygon points="${areaStr}" fill="url(#cg)"/>
+    <polyline points="${ptStr}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    ${dots}
+    <text x="${pad.l - 4}" y="${pad.t + ch}" font-size="9" fill="rgba(255,255,255,0.28)" text-anchor="end">${fmt(minV * 1.05)}</text>
+    <text x="${pad.l - 4}" y="${pad.t + 9}" font-size="9" fill="rgba(255,255,255,0.28)" text-anchor="end">${fmt(maxV * 0.95)}</text>
+    ${dateLabels}
   </svg>`;
 }
 
@@ -515,13 +528,45 @@ function getFormData() {
   };
 }
 
+// Run price lookup in background after saving — no overlay, no blocking
+async function silentPriceCheck(id) {
+  try {
+    const card = await (await fetch(`/api/cards/${id}`)).json();
+    let result;
+    try {
+      result = await lookupPriceClientSide(buildKeywordsClient(card));
+    } catch (e) {
+      const res = await fetch('/api/ebay-price', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...card, card_id: id }),
+      });
+      result = await res.json();
+    }
+    if (!result || result.error || !(result.estimated_value > 0)) return;
+    await fetch(`/api/cards/${id}/set-price`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        price: result.estimated_value,
+        source: result.source || 'AI',
+        range_low: result.value_range_low,
+        range_high: result.value_range_high,
+        sales_count: result.recent_sales_count,
+        recent_sales: result.recent_sales,
+      }),
+    });
+    showToast(`${result.source}: $${result.estimated_value}`, 'success');
+    loadCards();
+  } catch (e) { /* silent */ }
+}
+
 async function saveCard() {
   const data = getFormData();
   if (!data.player_name) { showToast('Player name is required', 'error'); return; }
 
   try {
     if (editingBulkIndex !== null) {
-      // Update in-memory bulk review card and return to review
       bulkReviewCards[editingBulkIndex] = { ...bulkReviewCards[editingBulkIndex], ...data };
       const idx = editingBulkIndex;
       editingBulkIndex = null;
@@ -539,14 +584,16 @@ async function saveCard() {
       resetForm();
       switchView('collection');
     } else {
-      await fetch('/api/cards', {
+      const res = await fetch('/api/cards', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data)
       });
-      showToast('Card added to collection!');
+      const saved = await res.json();
+      showToast('Card added! Checking price...');
       resetForm();
       switchView('collection');
+      silentPriceCheck(saved.id); // background, no await
     }
   } catch (e) {
     showToast('Failed to save card', 'error');
@@ -1329,10 +1376,11 @@ function showBulkReview(cards) {
 async function saveBulkCards() {
   const btn = document.querySelector('#scan-review-bulk .btn-primary');
   if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
-  let saved = 0;
+  let savedCount = 0;
+  const savedIds = [];
   for (const card of bulkReviewCards) {
     try {
-      await fetch('/api/cards', {
+      const res = await fetch('/api/cards', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1352,13 +1400,21 @@ async function saveBulkCards() {
           notes: card.is_rookie ? 'Rookie Card' : '',
         })
       });
-      saved++;
+      const saved = await res.json();
+      savedIds.push(saved.id);
+      savedCount++;
     } catch (e) {}
   }
-  showToast(`${saved} card${saved !== 1 ? 's' : ''} added to collection!`, 'success');
+  showToast(`${savedCount} card${savedCount !== 1 ? 's' : ''} added! Checking prices...`, 'success');
   bulkReviewCards = [];
   resetScan();
   switchView('collection');
+  // Price check all cards sequentially in background
+  (async () => {
+    for (const id of savedIds) {
+      await silentPriceCheck(id);
+    }
+  })();
 }
 
 function editBulkCard(index) {
