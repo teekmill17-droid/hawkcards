@@ -72,6 +72,20 @@ async function initDB() {
     )
   `);
 
+  // Schema migrations — safe to run multiple times (ALTER TABLE fails silently if column exists)
+  const migrations = [
+    "ALTER TABLE cards ADD COLUMN print_run TEXT DEFAULT ''",
+    "ALTER TABLE cards ADD COLUMN is_rookie INTEGER DEFAULT 0",
+    "ALTER TABLE cards ADD COLUMN is_autograph INTEGER DEFAULT 0",
+    "ALTER TABLE cards ADD COLUMN is_patch INTEGER DEFAULT 0",
+    "ALTER TABLE price_history ADD COLUMN raw_value REAL DEFAULT 0",
+    "ALTER TABLE price_history ADD COLUMN price_by_grade_json TEXT DEFAULT '{}'",
+    "ALTER TABLE price_history ADD COLUMN sources_json TEXT DEFAULT '[]'",
+  ];
+  for (const m of migrations) {
+    try { db.run(m); } catch (e) { /* column already exists */ }
+  }
+
   saveDB();
   return db;
 }
