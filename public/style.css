@@ -515,6 +515,53 @@ body {
 }
 .detail-hint { font-size: 12px; color: var(--text-4); }
 
+/* Confidence banner (scan form) */
+.conf-banner {
+  border-radius: 8px; padding: 10px 14px; margin-bottom: 14px;
+  font-size: 12px; line-height: 1.5;
+}
+.conf-banner.conf-medium { background: rgba(251,191,36,0.1); border: 1px solid rgba(251,191,36,0.3); color: #fbbf24; }
+.conf-banner.conf-low { background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3); color: #f87171; }
+
+/* Grade breakdown — Card Ladder style */
+.grade-breakdown { margin-bottom: 14px; }
+.grade-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.grade-cell {
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 10px; padding: 12px 8px; text-align: center;
+}
+.grade-cell.grade-empty { opacity: 0.35; }
+.grade-label { font-size: 9px; font-weight: 700; color: var(--text-3); margin: 0 0 5px; text-transform: uppercase; letter-spacing: 0.6px; }
+.grade-price { font-size: 17px; font-weight: 800; color: var(--text); margin: 0 0 3px; }
+.grade-range { font-size: 10px; color: var(--text-4); margin: 0 0 2px; }
+.grade-count { font-size: 10px; color: var(--text-4); margin: 0; }
+.grade-na { font-size: 16px; font-weight: 600; color: var(--text-4); margin: 4px 0 0; }
+
+/* Source pills */
+.source-pills { display: flex; flex-wrap: wrap; gap: 4px; }
+.source-pill { font-size: 10px; font-weight: 600; color: var(--text-4); background: var(--surface-2); border: 1px solid var(--border); border-radius: 5px; padding: 2px 8px; }
+
+/* Recent comps list */
+.comps-list { display: flex; flex-direction: column; gap: 6px; }
+.comp-row { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: var(--surface-2); border-radius: 8px; }
+.comp-badge { font-size: 9px; font-weight: 700; padding: 2px 6px; border-radius: 4px; flex-shrink: 0; text-transform: uppercase; letter-spacing: 0.3px; white-space: nowrap; }
+.comp-badge.graded { background: rgba(255,205,0,0.12); color: var(--accent); }
+.comp-badge.raw { background: rgba(255,255,255,0.07); color: var(--text-3); }
+.comp-info { flex: 1; min-width: 0; }
+.comp-title { font-size: 11px; color: var(--text-2); margin: 0 0 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.comp-meta { font-size: 10px; color: var(--text-4); margin: 0; }
+.comp-price { font-size: 13px; font-weight: 700; color: var(--text); flex-shrink: 0; }
+
+/* Price history filters */
+.ph-filters { display: flex; gap: 4px; }
+.ph-filter {
+  background: transparent; border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text-3); font-size: 11px; font-weight: 600; padding: 3px 8px;
+  cursor: pointer; transition: all 0.15s;
+}
+.ph-filter:hover { border-color: var(--accent); color: var(--accent); }
+.ph-filter.active { background: var(--accent); border-color: var(--accent); color: #000; }
+
 /* Price history in detail */
 .price-chart-wrap { margin-bottom: 12px; }
 .price-chart-svg { width: 100%; height: auto; display: block; }
@@ -841,3 +888,94 @@ body {
 .form-no-image {
   margin-bottom: 12px;
 }
+
+/* ========== CARD LADDER — MARKET DATA UI ========== */
+
+/* Detail card-line (set · parallel · print run) */
+.detail-card-line {
+  font-size: 11px; color: var(--text-4); margin-top: 3px;
+}
+
+/* Rookie / auto badges */
+.dbadge.rookie { background: rgba(251,191,36,0.12); color: var(--yellow); border: 1px solid rgba(251,191,36,0.25); }
+.dbadge.auto { background: rgba(52,211,153,0.1); color: var(--green); border: 1px solid rgba(52,211,153,0.2); }
+
+/* Grade price tiles — horizontal scrolling row */
+.grade-tiles {
+  display: flex; gap: 8px; overflow-x: auto; padding-bottom: 6px;
+  margin-bottom: 12px; -webkit-overflow-scrolling: touch; scrollbar-width: none;
+}
+.grade-tiles::-webkit-scrollbar { display: none; }
+.grade-tile {
+  display: flex; flex-direction: column; align-items: center;
+  min-width: 74px; padding: 10px 12px; border-radius: 12px;
+  background: var(--surface-2); border: 1px solid var(--border);
+  gap: 3px; flex-shrink: 0;
+}
+.grade-tile.highlight {
+  background: var(--accent-bg); border-color: var(--accent-border);
+}
+.gt-label {
+  font-size: 9px; font-weight: 700; color: var(--text-3);
+  text-transform: uppercase; letter-spacing: 0.8px;
+}
+.grade-tile.highlight .gt-label { color: var(--accent); }
+.gt-price { font-size: 17px; font-weight: 800; color: var(--text); }
+.grade-tile.highlight .gt-price { color: var(--accent); }
+.gt-count { font-size: 9px; color: var(--text-4); font-weight: 500; }
+
+/* Source pills */
+.source-pills {
+  display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 12px;
+}
+.src-pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 4px 10px; border-radius: 20px;
+  border: 1px solid var(--border); background: var(--surface-2);
+  font-size: 11px; font-weight: 600; color: var(--text-4);
+}
+.src-pill.active {
+  border-color: var(--accent-border); background: var(--accent-bg); color: var(--accent-2);
+}
+.src-pill-count {
+  background: var(--accent); color: #000; font-size: 9px; font-weight: 800;
+  padding: 0 5px; border-radius: 8px; line-height: 1.6; min-width: 16px; text-align: center;
+}
+
+/* Recent sales table */
+.sales-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.sales-table {
+  width: 100%; border-collapse: collapse; font-size: 12px;
+}
+.sales-table th {
+  text-align: left; font-size: 9px; font-weight: 700; color: var(--text-4);
+  text-transform: uppercase; letter-spacing: 0.8px;
+  padding: 0 10px 8px 0; border-bottom: 1px solid var(--border);
+}
+.sales-table td {
+  padding: 7px 10px 7px 0; border-bottom: 1px solid var(--border); vertical-align: middle;
+}
+.sales-table tr:last-child td { border-bottom: none; }
+.st-price { font-weight: 700; color: var(--green); white-space: nowrap; }
+.st-date { color: var(--text-4); font-size: 11px; white-space: nowrap; }
+
+/* Grade badges in sales table */
+.grade-badge {
+  display: inline-block; font-size: 9px; font-weight: 700; padding: 2px 7px;
+  border-radius: 5px; white-space: nowrap;
+  background: rgba(96,165,250,0.12); color: var(--blue); border: 1px solid rgba(96,165,250,0.2);
+}
+.grade-badge.raw { background: var(--surface-3); color: var(--text-3); border-color: var(--border); }
+
+/* Source badges in sales table */
+.src-badge {
+  display: inline-block; font-size: 9px; font-weight: 600; padding: 2px 7px;
+  border-radius: 5px; white-space: nowrap;
+  background: var(--surface-3); color: var(--text-3); border: 1px solid var(--border);
+}
+.src-badge.ebay { background: rgba(255,205,0,0.1); color: #c8a800; border-color: rgba(255,205,0,0.25); }
+.src-badge.pwcc { background: rgba(52,211,153,0.1); color: var(--green); border-color: rgba(52,211,153,0.2); }
+.src-badge.goldin { background: rgba(251,191,36,0.1); color: var(--yellow); border-color: rgba(251,191,36,0.2); }
+.src-badge.heritage { background: rgba(239,68,68,0.08); color: var(--red); border-color: rgba(239,68,68,0.15); }
+.src-badge.collx { background: rgba(139,92,246,0.1); color: #a78bfa; border-color: rgba(139,92,246,0.2); }
+

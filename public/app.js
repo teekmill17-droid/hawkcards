@@ -21,6 +21,7 @@ let currentImagePath = '';
 let cameraStream = null;
 let reviewCardData = null;
 let bulkReviewCards = [];
+let currentDetailHistory = [];
 
 // ========== INIT ==========
 document.addEventListener('DOMContentLoaded', async () => {
@@ -241,7 +242,7 @@ function clearSearch() {
   loadCards();
 }
 
-// ========== DETAIL MODAL ==========
+// ========== DETAIL MODAL — Card Ladder style ==========
 async function openDetail(id) {
   try {
     const [card, history] = await Promise.all([
@@ -249,12 +250,19 @@ async function openDetail(id) {
       fetch(`/api/cards/${id}/price-history`).then(r => r.json()),
     ]);
 
-    const lastSales = history.length ? history[history.length - 1].recent_sales || [] : [];
+    currentDetailHistory = history;
+    const lastEntry = history.length ? history[history.length - 1] : null;
+
     const badges = [
       card.is_duplicate ? '<span class="dbadge dupe">DUPE</span>' : '',
       card.is_graded ? `<span class="dbadge graded">${card.psa_grade || 'GRADED'}</span>` : '',
       card.is_wishlist ? '<span class="dbadge wish">WISH</span>' : '',
+      card.is_rookie ? '<span class="dbadge rookie">RC</span>' : '',
+      card.is_autograph ? '<span class="dbadge auto">AUTO</span>' : '',
     ].filter(Boolean).join('');
+
+    const setLine = [card.set_name, card.parallel, card.print_run ? `/${card.print_run}` : ''].filter(Boolean).join(' · ');
+    const srcLabel = lastEntry?.source || 'est. value';
 
     document.getElementById('detail-content').innerHTML = `
       ${card.image_path
@@ -267,23 +275,44 @@ async function openDetail(id) {
             <div>
               <p class="detail-name">${esc(card.player_name || 'Unknown')} ${badges}</p>
               <p class="detail-sub">${[card.team, card.year, card.sport].filter(Boolean).join(' · ')}</p>
+              ${setLine ? `<p class="detail-card-line">${esc(setLine)}</p>` : ''}
             </div>
             ${card.estimated_value > 0
               ? `<div class="detail-val-block">
                    <span class="detail-value">$${Number(card.estimated_value).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
-                   <span class="detail-val-label">est. value</span>
+                   <span class="detail-val-label">${esc(srcLabel)}</span>
                  </div>`
               : ''}
           </div>
           <div class="detail-actions">
             <button class="detail-btn" onclick="editCard(${card.id})">✏️ Edit</button>
-            <button class="detail-btn accent" onclick="lookupDetailValue(${card.id})">🤖 AI Price Check</button>
+            <button class="detail-btn accent" id="market-check-btn-${card.id}" onclick="runMarketCheck(${card.id})">🔍 Market Check</button>
+            <button class="detail-btn" onclick="lookupDetailValue(${card.id})">⚡ Quick Price</button>
             <button class="detail-btn" onclick="setManualPrice(${card.id})">💲 Set Price</button>
             <button class="detail-btn" onclick="toggleDupe(${card.id}, ${card.is_duplicate})">${card.is_duplicate ? '✅ Undupe' : '🔁 Mark Dupe'}</button>
             <button class="detail-btn danger" onclick="deleteCard(${card.id})">🗑 Delete</button>
           </div>
         </div>
 
+        <!-- Market Prices — Card Ladder style -->
+        <div class="detail-section" id="market-section-${card.id}">
+          ${buildMarketSection(lastEntry, card)}
+        </div>
+
+        <!-- Price History chart -->
+        ${history.length ? `
+          <div class="detail-section">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+              <p class="detail-section-title" style="margin:0">Price History <span class="detail-section-count">${history.length} lookup${history.length !== 1 ? 's' : ''}</span></p>
+              <div class="ph-filters">
+                ${['All','1Y','6M','1M','1W'].map(p => `<button class="ph-filter${p === 'All' ? ' active' : ''}" onclick="filterPriceChart('${p}', this)">${p}</button>`).join('')}
+              </div>
+            </div>
+            <div id="price-chart-content">${buildPriceChartContent(history)}</div>
+          </div>
+        ` : ''}
+
+        <!-- Card Details -->
         <div class="detail-section">
           <p class="detail-section-title">Card Details</p>
           <div class="detail-grid">
@@ -292,48 +321,13 @@ async function openDetail(id) {
             ${detailField('Set', card.set_name)}
             ${detailField('Subset', card.subset)}
             ${detailField('Parallel', card.parallel)}
+            ${detailField('Print Run', card.print_run ? `/${card.print_run}` : '')}
             ${detailField('Condition', card.condition_grade)}
             ${detailField('Grade', card.psa_grade)}
             ${detailField('Purchased', card.purchase_price > 0 ? `$${card.purchase_price}` : '')}
           </div>
           ${card.notes ? `<div class="detail-notes">${esc(card.notes)}</div>` : ''}
         </div>
-
-        ${history.length ? `
-          <div class="detail-section">
-            <p class="detail-section-title">Price History <span class="detail-section-count">${history.length} lookup${history.length !== 1 ? 's' : ''}</span></p>
-            <div class="price-chart-wrap">${buildPriceChart(history)}</div>
-            ${history.length > 1 ? `<div class="price-history-list" style="margin-top:10px">
-              ${history.slice(-5).reverse().map(h => `
-                <div class="ph-row">
-                  <span class="ph-date">${h.looked_up_at.slice(0,10)}</span>
-                  <span class="ph-val">$${Number(h.estimated_value).toFixed(2)}</span>
-                  <span class="ph-range">${h.value_range_low > 0 ? `$${h.value_range_low}–$${h.value_range_high}` : h.source || ''}</span>
-                  <span class="ph-count">${h.recent_sales_count > 0 ? `${h.recent_sales_count} sold` : ''}</span>
-                </div>
-              `).join('')}
-            </div>` : ''}
-          </div>
-        ` : ''}
-
-        ${lastSales.length ? `
-          <div class="detail-section">
-            <p class="detail-section-title">Recent eBay Sales <span class="detail-section-count">${lastSales.length} listings</span></p>
-            <div class="sales-list">
-              ${lastSales.map(s => `
-                <div class="sale-row">
-                  <div class="sale-info">
-                    <p class="sale-title">${esc(s.title)}</p>
-                    <p class="sale-date">${s.date || ''}</p>
-                  </div>
-                  <span class="sale-price">$${Number(s.price).toFixed(2)}</span>
-                  ${s.url ? `<a class="sale-link" href="${s.url}" target="_blank">↗</a>` : ''}
-                </div>
-              `).join('')}
-            </div>
-          </div>
-        ` : ''}
-
       </div>
     `;
 
@@ -346,6 +340,110 @@ async function openDetail(id) {
 function detailField(label, value) {
   if (!value) return '';
   return `<div class="detail-field"><p class="detail-field-label">${label}</p><p class="detail-field-value">${esc(String(value))}</p></div>`;
+}
+
+// ========== MARKET CHECK ==========
+async function runMarketCheck(id) {
+  const btn = document.getElementById(`market-check-btn-${id}`);
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Fetching...'; }
+  showAI('Market Check', 'Searching eBay · PWCC · Goldin · Heritage · CollX · 130pt', 'Finding real sold prices across all sources by grade');
+  try {
+    const res = await fetch(`/api/cards/${id}/market-check`, { method: 'POST' });
+    const data = await res.json();
+    hideAI();
+    if (data.error) { showToast(data.error, 'error'); if (btn) { btn.disabled = false; btn.textContent = '🔍 Market Check'; } return; }
+    const priceMsg = data.estimated_value > 0 ? ` — $${Number(data.estimated_value).toFixed(2)}` : '';
+    showToast(`Market check complete${priceMsg}`, 'success');
+    loadCards();
+    openDetail(id);
+  } catch (e) {
+    hideAI();
+    showToast('Market check failed — add a Gemini key in Settings', 'error');
+    if (btn) { btn.disabled = false; btn.textContent = '🔍 Market Check'; }
+  }
+}
+
+function buildMarketSection(lastEntry, card) {
+  const grades = lastEntry?.price_by_grade || {};
+  const bySource = lastEntry?.sources || {};
+  const allSales = lastEntry?.recent_sales || [];
+  const rawAvg = lastEntry?.raw_value || 0;
+  const hasGrades = Object.values(grades).some(g => (g.avg || 0) > 0);
+  const hasAny = hasGrades || rawAvg > 0 || allSales.length > 0;
+
+  let html = `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+    <p class="detail-section-title" style="margin:0">Market Prices</p>
+    ${hasAny ? `<span style="font-size:10px;color:var(--text-4)">${(lastEntry?.looked_up_at||'').slice(0,10)}</span>` : ''}
+  </div>`;
+
+  if (!hasAny) {
+    html += `<p style="font-size:13px;color:var(--text-3);text-align:center;padding:14px 0 8px">
+      No market data yet — tap <strong style="color:var(--accent)">Market Check</strong> to fetch live prices<br>
+      <span style="font-size:11px;color:var(--text-4);display:block;margin-top:4px">eBay · PWCC · Goldin · Heritage · CollX · 130point</span>
+    </p>`;
+    return html;
+  }
+
+  // Grade price tiles
+  html += `<div class="grade-tiles">`;
+  if (rawAvg > 0) {
+    html += `<div class="grade-tile">
+      <span class="gt-label">Raw</span>
+      <span class="gt-price">$${rawAvg < 10 ? rawAvg.toFixed(2) : Math.round(rawAvg)}</span>
+      <span class="gt-count">ungraded</span>
+    </div>`;
+  }
+  for (const g of ['PSA 7','PSA 8','PSA 9','PSA 10']) {
+    const d = grades[g];
+    if (!d || !(d.avg > 0)) continue;
+    const psaNum = g.replace('PSA ', '');
+    const isCurrent = card.psa_grade && card.psa_grade.toString().replace(/[^0-9.]/g, '') === psaNum;
+    html += `<div class="grade-tile${isCurrent ? ' highlight' : ''}">
+      <span class="gt-label">${g}</span>
+      <span class="gt-price">$${d.avg < 10 ? d.avg.toFixed(2) : Math.round(d.avg)}</span>
+      <span class="gt-count">${d.count > 0 ? d.count + ' sold' : 'est'}</span>
+    </div>`;
+  }
+  html += `</div>`;
+
+  // Source breakdown pills
+  const sourceList = ['eBay','PWCC','Goldin','Heritage','CollX','130point'];
+  if (Object.keys(bySource).length > 0) {
+    html += `<div class="source-pills">`;
+    for (const s of sourceList) {
+      const d = bySource[s];
+      const active = d && d.count > 0;
+      html += `<span class="src-pill${active ? ' active' : ''}">
+        ${s}${active ? `<span class="src-pill-count">${d.count}</span>` : ''}
+      </span>`;
+    }
+    html += `</div>`;
+  }
+
+  // Recent sales table
+  if (allSales.length > 0) {
+    const fmt = n => Number(n) < 10 ? Number(n).toFixed(2) : Math.round(Number(n));
+    html += `<p style="font-size:10px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:1px;margin:12px 0 8px">Recent Sales</p>
+    <div class="sales-table-wrap"><table class="sales-table">
+      <thead><tr><th>Price</th><th>Grade</th><th>Source</th><th>Date</th></tr></thead>
+      <tbody>
+        ${allSales.slice(0, 15).map(s => {
+          const gradeLabel = s.grade || 'Raw';
+          const gradeClass = gradeLabel.toLowerCase().replace(/\s+/g, '-');
+          const srcRaw = (s.source || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+          const srcClass = srcRaw === '130point' ? 'pt130' : srcRaw;
+          return `<tr>
+            <td class="st-price">$${fmt(s.price)}</td>
+            <td><span class="grade-badge ${gradeClass}">${esc(gradeLabel)}</span></td>
+            <td><span class="src-badge ${srcClass}">${esc(s.source || '')}</span></td>
+            <td class="st-date">${(s.date || '').replace(/\s+\d{4}$/, '')}</td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table></div>`;
+  }
+
+  return html;
 }
 
 function buildPriceChart(history) {
@@ -399,6 +497,141 @@ function buildPriceChart(history) {
   </svg>`;
 }
 
+function buildSalesTrendChart(sales) {
+  const dated = sales
+    .map(s => ({ ...s, ts: s.date ? new Date(s.date).getTime() : 0 }))
+    .filter(s => s.ts > 0 && s.price > 0)
+    .sort((a, b) => a.ts - b.ts);
+  if (dated.length < 3) return '';
+
+  const fmt = v => v >= 1000 ? `$${(v/1000).toFixed(1)}k` : `$${Number(v).toFixed(2)}`;
+  const vals = dated.map(s => s.price);
+  const change = vals[vals.length - 1] - vals[0];
+  const color = change >= 0 ? '#34d399' : '#ef4444';
+
+  const W = 320, H = 80, pad = { t: 8, r: 10, b: 18, l: 44 };
+  const cw = W - pad.l - pad.r, ch = H - pad.t - pad.b;
+  const minV = Math.min(...vals) * 0.9, maxV = Math.max(...vals) * 1.1;
+  const vRange = maxV - minV || 1;
+  const minT = dated[0].ts, maxT = dated[dated.length - 1].ts;
+  const tRange = maxT - minT || 1;
+
+  const pts = dated.map(s => ({
+    x: pad.l + ((s.ts - minT) / tRange) * cw,
+    y: pad.t + ch - ((s.price - minV) / vRange) * ch,
+    val: s.price, date: s.date,
+  }));
+  const ptStr = pts.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
+  const areaStr = `${pad.l},${pad.t + ch} ${ptStr} ${pts[pts.length-1].x.toFixed(1)},${pad.t + ch}`;
+  const dots = pts.map(p => `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="2.5" fill="${color}" stroke="var(--bg)" stroke-width="1"><title>${fmt(p.val)} · ${p.date}</title></circle>`).join('');
+  const firstLbl = dated[0].date.replace(/\s+\d{4}$/, '');
+  const lastLbl = dated[dated.length - 1].date.replace(/\s+\d{4}$/, '');
+
+  return `<div style="margin-bottom:14px">
+    <p style="font-size:11px;font-weight:600;color:var(--text-3);margin:0 0 6px">Market Trend <span style="font-size:10px;font-weight:400;color:var(--text-4)">${dated.length} recent eBay sales</span></p>
+    <svg viewBox="0 0 ${W} ${H}" class="price-chart-svg">
+      <defs><linearGradient id="tg" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="${color}" stop-opacity="0.15"/>
+        <stop offset="100%" stop-color="${color}" stop-opacity="0"/>
+      </linearGradient></defs>
+      <polygon points="${areaStr}" fill="url(#tg)"/>
+      <polyline points="${ptStr}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linejoin="round"/>
+      ${dots}
+      <text x="${pad.l}" y="${H - 2}" font-size="8" fill="rgba(255,255,255,0.28)" text-anchor="start">${firstLbl}</text>
+      <text x="${W - pad.r}" y="${H - 2}" font-size="8" fill="rgba(255,255,255,0.28)" text-anchor="end">${lastLbl}</text>
+      <text x="${pad.l - 4}" y="${pad.t + ch}" font-size="9" fill="rgba(255,255,255,0.28)" text-anchor="end">${fmt(minV * 1.05)}</text>
+      <text x="${pad.l - 4}" y="${pad.t + 9}" font-size="9" fill="rgba(255,255,255,0.28)" text-anchor="end">${fmt(maxV * 0.95)}</text>
+    </svg>
+  </div>`;
+}
+
+function buildPriceBreakdown(priceByGrade, rawValue, sources) {
+  const grades = priceByGrade || {};
+  const hasData = rawValue > 0 || Object.values(grades).some(g => g?.avg > 0);
+  if (!hasData) return '';
+  const fmt = v => v >= 1000 ? `$${(v/1000).toFixed(1)}k` : `$${Number(v).toFixed(2)}`;
+  const cell = (label, data) => {
+    if (!data || !(data.avg > 0)) return `<div class="grade-cell grade-empty"><p class="grade-label">${label}</p><p class="grade-na">—</p></div>`;
+    return `<div class="grade-cell">
+      <p class="grade-label">${label}</p>
+      <p class="grade-price">${fmt(data.avg)}</p>
+      ${data.low > 0 && data.high > 0 ? `<p class="grade-range">${fmt(data.low)} – ${fmt(data.high)}</p>` : ''}
+      ${data.count > 0 ? `<p class="grade-count">${data.count} sale${data.count !== 1 ? 's' : ''}</p>` : ''}
+    </div>`;
+  };
+  const rawData = rawValue > 0 ? { avg: rawValue, low: 0, high: 0, count: 0 } : null;
+  const sourcePills = Object.entries(sources || {})
+    .filter(([, d]) => d?.count > 0)
+    .map(([name, d]) => `<span class="source-pill">${name} · ${d.count}</span>`).join('');
+  return `<div class="grade-breakdown">
+    <p class="detail-section-title" style="margin-bottom:10px">Market Value by Grade</p>
+    <div class="grade-grid">
+      ${cell('Raw', rawData)}
+      ${cell('PSA 9', grades['PSA 9'] || null)}
+      ${cell('PSA 10', grades['PSA 10'] || null)}
+    </div>
+    ${sourcePills ? `<div class="source-pills" style="margin-top:8px">${sourcePills}</div>` : ''}
+  </div>`;
+}
+
+function buildRecentComps(sales) {
+  const valid = (sales || []).filter(s => s.price > 0).slice(0, 12);
+  if (!valid.length) return '';
+  return `<div class="detail-section" style="margin-top:12px">
+    <p class="detail-section-title">Recent Comps <span class="detail-section-count">${valid.length} sales</span></p>
+    <div class="comps-list">
+      ${valid.map(s => {
+        const isGraded = s.grade && s.grade !== 'Raw';
+        return `<div class="comp-row">
+          <span class="comp-badge ${isGraded ? 'graded' : 'raw'}">${s.grade || 'Raw'}</span>
+          <div class="comp-info">
+            ${s.title ? `<p class="comp-title">${esc(s.title)}</p>` : ''}
+            <p class="comp-meta">${[s.source, s.date].filter(Boolean).join(' · ')}</p>
+          </div>
+          <span class="comp-price">$${Number(s.price).toFixed(2)}</span>
+        </div>`;
+      }).join('')}
+    </div>
+  </div>`;
+}
+
+function buildPriceChartContent(history) {
+  if (!history.length) return '<p style="font-size:12px;color:var(--text-4);text-align:center;padding:20px 0">No lookups in this period</p>';
+  const latest = history[history.length - 1];
+  const latestSales = (latest.recent_sales || []).filter(s => s.price > 0);
+  const gradeBreakdown = buildPriceBreakdown(latest.price_by_grade, latest.raw_value, latest.sources);
+  const trendChart = buildSalesTrendChart(latestSales.filter(s => s.date));
+  const comps = buildRecentComps(latestSales);
+  return `
+    ${gradeBreakdown}
+    ${trendChart}
+    <div class="price-chart-wrap">${buildPriceChart(history)}</div>
+    ${history.length > 1 ? `<div class="price-history-list" style="margin-top:10px">
+      ${history.slice(-5).reverse().map(h => `
+        <div class="ph-row">
+          <span class="ph-date">${h.looked_up_at.slice(0,10)}</span>
+          <span class="ph-val">$${Number(h.estimated_value).toFixed(2)}</span>
+          <span class="ph-range">${h.value_range_low > 0 ? `$${h.value_range_low}–$${h.value_range_high}` : h.source || ''}</span>
+          <span class="ph-count">${h.recent_sales_count > 0 ? `${h.recent_sales_count} sold` : ''}</span>
+        </div>
+      `).join('')}
+    </div>` : ''}
+    ${comps}
+  `;
+}
+
+function filterPriceChart(period, el) {
+  document.querySelectorAll('.ph-filter').forEach(b => b.classList.remove('active'));
+  el.classList.add('active');
+  let filtered = currentDetailHistory;
+  if (period !== 'All') {
+    const days = { '1Y': 365, '6M': 180, '1M': 30, '1W': 7 }[period];
+    const cutoff = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+    filtered = currentDetailHistory.filter(h => h.looked_up_at.slice(0, 10) >= cutoff);
+  }
+  document.getElementById('price-chart-content').innerHTML = buildPriceChartContent(filtered);
+}
+
 function closeDetail() {
   document.getElementById('detail-modal').style.display = 'none';
 }
@@ -413,7 +646,7 @@ async function editCard(id) {
   document.getElementById('save-btn').textContent = 'Save Changes';
 
   // Fill form
-  const fields = ['player_name', 'team', 'sport', 'year', 'brand', 'card_number', 'set_name', 'subset', 'parallel', 'condition_grade', 'psa_grade', 'estimated_value', 'purchase_price', 'notes'];
+  const fields = ['player_name', 'team', 'sport', 'year', 'brand', 'card_number', 'set_name', 'subset', 'parallel', 'print_run', 'condition_grade', 'psa_grade', 'estimated_value', 'purchase_price', 'notes'];
   fields.forEach(f => {
     const el = document.getElementById(`f-${f}`);
     if (el) el.value = card[f] || '';
@@ -421,6 +654,7 @@ async function editCard(id) {
   document.getElementById('f-is_duplicate').checked = card.is_duplicate;
   document.getElementById('f-is_wishlist').checked = card.is_wishlist;
   document.getElementById('f-is_graded').checked = card.is_graded;
+  ['is_rookie','is_autograph','is_patch'].forEach(f => { const el = document.getElementById(`f-${f}`); if (el) el.value = card[f] ? '1' : '0'; });
 
   if (card.image_path) {
     document.getElementById('form-image-preview').style.display = 'block';
@@ -465,13 +699,15 @@ function resetForm() {
   document.getElementById('form-image-preview').style.display = 'none';
   document.getElementById('form-no-image').style.display = 'block';
 
-  const fields = ['player_name', 'team', 'year', 'brand', 'card_number', 'set_name', 'subset', 'parallel', 'psa_grade', 'estimated_value', 'purchase_price', 'notes'];
+  const fields = ['player_name', 'team', 'year', 'brand', 'card_number', 'set_name', 'subset', 'parallel', 'print_run', 'psa_grade', 'estimated_value', 'purchase_price', 'notes'];
   fields.forEach(f => { const el = document.getElementById(`f-${f}`); if (el) el.value = ''; });
   document.getElementById('f-sport').value = 'Baseball';
   document.getElementById('f-condition_grade').value = 'Near Mint';
   document.getElementById('f-is_duplicate').checked = false;
   document.getElementById('f-is_wishlist').checked = false;
   document.getElementById('f-is_graded').checked = false;
+  ['f-is_rookie','f-is_autograph','f-is_patch'].forEach(id => { const el = document.getElementById(id); if (el) el.value = '0'; });
+  document.getElementById('conf-banner')?.remove();
 }
 
 function cancelForm() {
@@ -516,6 +752,7 @@ function getFormData() {
     set_name: document.getElementById('f-set_name').value.trim(),
     subset: document.getElementById('f-subset').value.trim(),
     parallel: document.getElementById('f-parallel').value.trim(),
+    print_run: document.getElementById('f-print_run').value.trim(),
     condition_grade: document.getElementById('f-condition_grade').value,
     psa_grade: document.getElementById('f-psa_grade').value.trim(),
     estimated_value: parseFloat(document.getElementById('f-estimated_value').value) || 0,
@@ -524,6 +761,9 @@ function getFormData() {
     is_duplicate: document.getElementById('f-is_duplicate').checked ? 1 : 0,
     is_wishlist: document.getElementById('f-is_wishlist').checked ? 1 : 0,
     is_graded: document.getElementById('f-is_graded').checked ? 1 : 0,
+    is_rookie: parseInt(document.getElementById('f-is_rookie')?.value) || 0,
+    is_autograph: parseInt(document.getElementById('f-is_autograph')?.value) || 0,
+    is_patch: parseInt(document.getElementById('f-is_patch')?.value) || 0,
     image_path: currentImagePath,
   };
 }
@@ -534,30 +774,26 @@ async function silentPriceCheck(id) {
     const card = await (await fetch(`/api/cards/${id}`)).json();
     let result;
     try {
+      // Try client-side first (fast)
       result = await lookupPriceClientSide(buildKeywordsClient(card));
-    } catch (e) {
-      const res = await fetch('/api/ebay-price', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...card, card_id: id }),
+      await fetch(`/api/cards/${id}/set-price`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          price: result.estimated_value, source: result.source || 'eBay',
+          range_low: result.value_range_low, range_high: result.value_range_high,
+          sales_count: result.recent_sales_count, recent_sales: result.recent_sales,
+        }),
       });
+    } catch (e) {
+      // Full market check — grade breakdown, all sources, saves internally
+      const res = await fetch(`/api/cards/${id}/market-check`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
       result = await res.json();
     }
     if (!result || result.error || !(result.estimated_value > 0)) return;
-    await fetch(`/api/cards/${id}/set-price`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        price: result.estimated_value,
-        source: result.source || 'AI',
-        range_low: result.value_range_low,
-        range_high: result.value_range_high,
-        sales_count: result.recent_sales_count,
-        recent_sales: result.recent_sales,
-      }),
-    });
-    showToast(`${result.source}: $${result.estimated_value}`, 'success');
-    loadCards();
+    showToast(`$${result.estimated_value} · ${result.source || 'market check done'}`, 'success');
+    await loadCards();
+    const onCollection = document.getElementById('view-collection')?.classList.contains('active');
+    if (onCollection) openDetail(id);
   } catch (e) { /* silent */ }
 }
 
@@ -612,6 +848,7 @@ function buildKeywordsClient(card) {
     if (card.set_name) parts.push(card.set_name);
   }
   if (card.parallel) parts.push(card.parallel);
+  if (card.print_run) parts.push(`/${card.print_run}`);
   if (card.card_number) parts.push(`#${card.card_number}`);
   if (card.psa_grade) parts.push(`PSA ${card.psa_grade}`);
   return parts.filter(Boolean).join(' ');
@@ -729,56 +966,40 @@ async function lookupValue() {
 
 async function lookupDetailValue(id) {
   const card = await (await fetch(`/api/cards/${id}`)).json();
-  showAI('Checking price...', `Searching for ${card.player_name}...`, 'Trying eBay, 130point, SportsCardsPro, AI estimate...');
+  showAI('Market check...', `Searching for ${card.player_name}...`, 'eBay · PWCC · Goldin · Heritage · CollX · 130point');
 
   try {
-    // Try browser-side fetch first (bypasses Railway IP block)
     let result;
     try {
+      // Try client-side first (fast, user's IP bypasses eBay block)
       result = await lookupPriceClientSide(buildKeywordsClient(card));
-    } catch (e) {
-      // Fall back to server-side (which tries Gemini search, SportsCardsPro, etc.)
-      const res = await fetch('/api/ebay-price', {
+      await fetch(`/api/cards/${id}/set-price`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...card, card_id: id })
+        body: JSON.stringify({
+          price: result.estimated_value, source: result.source || 'eBay',
+          range_low: result.value_range_low, range_high: result.value_range_high,
+          sales_count: result.recent_sales_count, recent_sales: result.recent_sales,
+        }),
       });
+    } catch (e) {
+      // Full multi-source market check — grade breakdown, all sources, saves to DB internally
+      const res = await fetch(`/api/cards/${id}/market-check`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
       result = await res.json();
     }
     hideAI();
 
-    if (result.error) {
-      showToast('No price data found — tap Set Price to enter manually, or add a Gemini key in Settings', 'info');
+    if (result.error || !(result.estimated_value > 0)) {
+      showToast('No price data found — tap Set Price to enter manually', 'info');
       return;
     }
 
-    if (result.estimated_value > 0) {
-      // Save price via set-price endpoint (stores full history entry)
-      await fetch(`/api/cards/${id}/set-price`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          price: result.estimated_value,
-          source: result.source || 'eBay Sold Listings',
-          range_low: result.value_range_low,
-          range_high: result.value_range_high,
-          sales_count: result.recent_sales_count,
-          recent_sales: result.recent_sales,
-        })
-      });
-      const isEstimate = result.source === 'AI Estimate';
-      const range = result.value_range_low && result.value_range_high && !isEstimate
-        ? ` ($${result.value_range_low}–$${result.value_range_high})`
-        : isEstimate ? ` (~$${result.value_range_low}–$${result.value_range_high})` : '';
-      const soldInfo = result.recent_sales_count > 0 ? ` · ${result.recent_sales_count} sold` : '';
-      const toastType = isEstimate ? 'info' : 'success';
-      showToast(`${result.source}: $${result.estimated_value}${range}${soldInfo}`, toastType);
-      loadCards();
-      openDetail(id);
-    } else {
-      showToast(result.message || 'No price data found', 'info');
-    }
+    const hasGrades = result.grades && Object.values(result.grades).some(g => g?.avg > 0);
+    showToast(hasGrades ? 'Market data loaded — Raw, PSA 9, PSA 10 prices found' : `${result.source || 'Done'}: $${result.estimated_value}`, 'success');
+    loadCards();
+    openDetail(id);
   } catch (e) {
     hideAI();
-    showToast('Lookup failed — add a Gemini key in Settings for reliable lookup', 'info');
+    showToast('Lookup failed — check your Gemini key in Settings', 'info');
   }
 }
 
@@ -1316,11 +1537,8 @@ function fillFormFromCard(card) {
   set('f-card_number', card.card_number);
   set('f-set_name', card.set_name);
   set('f-subset', card.subset);
-
-  // Combine parallel + print run
-  const parallel = [card.parallel, card.print_run ? `/${card.print_run}` : null]
-    .filter(Boolean).join(' ');
-  set('f-parallel', parallel || card.parallel);
+  set('f-parallel', card.parallel);
+  set('f-print_run', card.print_run);
 
   if (card.sport && ['Baseball', 'Football', 'Basketball'].includes(card.sport)) {
     document.getElementById('f-sport').value = card.sport;
@@ -1331,6 +1549,12 @@ function fillFormFromCard(card) {
     document.getElementById('f-is_graded').checked = true;
     set('f-psa_grade', card.psa_grade);
   }
+
+  // Store AI-detected special attributes in hidden fields
+  const setHidden = (id, val) => { const el = document.getElementById(id); if (el) el.value = val ? '1' : '0'; };
+  setHidden('f-is_rookie', card.is_rookie);
+  setHidden('f-is_autograph', card.is_autograph);
+  setHidden('f-is_patch', card.is_patch);
 
   // Build notes from special attributes
   const notesParts = [];
@@ -1343,11 +1567,19 @@ function fillFormFromCard(card) {
     notesEl.value = notesParts.join(' · ');
   }
 
-  // Show toast with confidence
-  if (card.confidence === 'low') {
-    showToast('Low confidence — please review the filled fields', 'info');
-  } else if (card.confidence === 'medium') {
-    showToast('Card recognized — double-check the details', 'info');
+  // Confidence banner — injected at top of add form
+  document.getElementById('conf-banner')?.remove();
+  if (card.confidence === 'low' || card.confidence === 'medium') {
+    const banner = document.createElement('div');
+    banner.id = 'conf-banner';
+    banner.className = `conf-banner conf-${card.confidence}`;
+    banner.innerHTML = card.confidence === 'low'
+      ? '<strong>Low confidence</strong> — AI wasn\'t certain. Verify all fields before saving.'
+      : '<strong>Medium confidence</strong> — identified from visual cues. Double-check the details.';
+    const firstSection = document.getElementById('view-add')?.querySelector('.section');
+    if (firstSection) firstSection.insertBefore(banner, firstSection.firstChild);
+  } else if (card.confidence === 'high') {
+    showToast('Card identified with high confidence', 'success');
   }
 }
 
@@ -1428,7 +1660,7 @@ function editBulkCard(index) {
   document.getElementById('form-title').textContent = `Edit Card ${index + 1}`;
   document.getElementById('save-btn').textContent = '✓ Save & Return to Review';
 
-  const fields = ['player_name', 'team', 'year', 'brand', 'card_number', 'set_name', 'subset', 'parallel', 'psa_grade', 'estimated_value', 'purchase_price', 'notes'];
+  const fields = ['player_name', 'team', 'year', 'brand', 'card_number', 'set_name', 'subset', 'parallel', 'print_run', 'psa_grade', 'estimated_value', 'purchase_price', 'notes'];
   fields.forEach(f => {
     const el = document.getElementById(`f-${f}`);
     if (el) el.value = card[f] != null ? card[f] : '';
@@ -1440,6 +1672,7 @@ function editBulkCard(index) {
   document.getElementById('f-is_duplicate').checked = false;
   document.getElementById('f-is_wishlist').checked = false;
   document.getElementById('f-is_graded').checked = false;
+  ['is_rookie','is_autograph','is_patch'].forEach(f => { const el = document.getElementById(`f-${f}`); if (el) el.value = card[f] ? '1' : '0'; });
 
   if (card.image_path) {
     document.getElementById('form-image-preview').style.display = 'block';

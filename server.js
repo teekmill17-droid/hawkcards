@@ -98,45 +98,61 @@ app.post('/api/settings/groq', (req, res) => {
 // --- AI Card Recognition ---
 // Prefers Groq (free, fast, reliable). Falls back to Gemini if Groq key not set.
 
-const CARD_PROMPT = `You are a professional sports card authenticator. Analyze this card image with extreme attention to detail. Return ONLY raw JSON — no markdown, no backticks, no explanation.
+const CARD_PROMPT = `You are a professional sports card authenticator and expert player identifier. Analyze this card image with extreme attention to detail. Return ONLY raw JSON — no markdown, no backticks, no explanation.
 
-READING THE CARD — check every corner, edge, and both sides if visible:
+STEP 1 — READ ALL TEXT on the card (scan every location):
+- Front: center name bar, bottom strip, top strip, all four corners, both side edges
+- Back (if visible): header name, stat lines, copyright text at very bottom
+- Fine print anywhere — copyright lines often contain the year and brand
+- Foil stamps, holograms, serial number boxes
 
-PLAYER NAME: Large text, usually center or bottom of front.
+STEP 2 — IDENTIFY THE PLAYER (try each in order, stop when found):
+1. Player name explicitly printed anywhere on the front or back
+2. Autograph signature — carefully read the handwriting; many signatures spell the full name
+3. If no name is readable, IDENTIFY from visual cues:
+   • Jersey number + team colors/logo → look up known rosters
+     e.g. #15 Kansas City Chiefs = Patrick Mahomes | #23 Chicago Bulls (90s) = Michael Jordan
+     e.g. #12 Tampa Bay Buccaneers = Tom Brady | #10 LA Rams = Cooper Kupp
+     e.g. #27 New York Yankees (pinstripes) = Mike Trout era ≠ look at uniform
+   • Player's face, build, and athletic position shown in the action photo
+   • Helmet decal, cap logo, or team name on uniform
+   • Card era + uniform style to narrow the era and roster
+4. If still uncertain after all above, make your single best guess and set confidence="low"
 
-YEAR: Look at the bottom edge text line. "2024 Topps Chrome" means year=2024. If not visible, use null.
+STEP 3 — IDENTIFY TEAM:
+Use team name or logo printed on the card. If not printed but identifiable from uniform/helmet, use that. Do NOT leave blank if uniform is visible.
 
-BRAND (manufacturer only — single word/name):
+YEAR: Look at bottom edge text or copyright line. "2024 Topps Chrome" or "© 2024" → year=2024. If not visible, use null.
+
+BRAND (manufacturer name only):
 Topps, Bowman, Panini, Upper Deck, Leaf, Donruss, Fleer, Score, SP, O-Pee-Chee, Stadium Club, Select, Mosaic, Optic, Chronicles, Immaculate, Prizm, Certified, National Treasures
 
-SET NAME (full product name including year and brand):
+SET NAME (full product line including year + brand):
 Examples: "2024 Topps Chrome", "2023 Panini Prizm", "2022 Bowman Draft", "2024 Leaf HYPE!"
-The set name IS the full line you read at the card edge.
+Read the full text line at the card's edge — that IS the set name.
 
-CARD NUMBER: Small text, often bottom corner or back. Format: "123", "RC-45", "BCP-12". NOT the print run fraction.
+CARD NUMBER: Small text, often bottom corner or card back. Format: "123", "RC-45", "BCP-12". NOT a print run fraction like 23/99.
 
-PARALLEL (color/finish variation — this is critical for value):
+PARALLEL (color/finish variation — critical for value):
 - Topps/Bowman Chrome: Base Refractor, Gold Refractor /50, Blue Refractor /150, Red Refractor /5, Orange /25, Purple /10, SuperFractor 1/1, Atomic, Speckle, Negative
 - Panini Prizm: Silver (base), Gold /10, Red /149, Blue /199, Purple /49, Green /75, Red White Blue, Hyper, Disco, Holo
 - Panini Optic: Base, Holo, Gold /10, Blue /149, Red /99, Pink /50, Purple /25
 - Leaf: Gold, Silver, Blue, Red — always numbered
 - Plain base card with no special finish = null
-Look for: color of the card border/foil, shimmer type, and any serial number stamp.
+Look for: border/foil color, shimmer type, serial number stamp.
 
-PRINT RUN: Serial number stamp like "23/99" or "007/150" — record as "99" or "150" (denominator only).
-
-TEAM: The team name printed on the card (not inferred from player).
+PRINT RUN: Serial number like "23/99" or "007/150" → record denominator only: "99" or "150".
 
 SPORT: Baseball, Football, or Basketball only.
 
-is_rookie: true ONLY if RC, Rookie Card, or Rookie logo visible.
-is_autograph: true if a handwritten signature is present.
-is_patch: true if a fabric/jersey swatch is embedded.
+is_rookie: true ONLY if RC, Rookie Card, or Rookie logo is explicitly visible.
+is_autograph: true if a handwritten signature is present on the card.
+is_patch: true if a fabric/jersey swatch is embedded in the card.
 
 Return exactly:
 {"player_name":"","team":"","year":null,"sport":"Baseball","brand":"","card_number":"","set_name":"","subset":null,"parallel":null,"print_run":null,"is_rookie":false,"is_autograph":false,"is_patch":false,"condition_notes":null,"confidence":"high"}
 
-confidence: "high"=clearly readable, "medium"=partially visible, "low"=unclear image.`;
+confidence: "high"=name clearly printed on card, "medium"=identified from visual cues or partial text, "low"=best guess from limited information.`;
 
 async function recognizeWithClaude(apiKey, base64, mimeType) {
   const r = await fetch('https://api.anthropic.com/v1/messages', {
@@ -147,8 +163,8 @@ async function recognizeWithClaude(apiKey, base64, mimeType) {
       'content-type': 'application/json',
     },
     body: JSON.stringify({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 512,
+      model: 'claude-sonnet-4-6',
+      max_tokens: 1024,
       messages: [{ role: 'user', content: [
         { type: 'image', source: { type: 'base64', media_type: mimeType, data: base64 } },
         { type: 'text', text: CARD_PROMPT }
@@ -279,14 +295,17 @@ app.get('/api/cards/:id', (req, res) => {
 app.post('/api/cards', (req, res) => {
   const c = req.body;
   const id = run(`INSERT INTO cards (player_name, team, year, sport, brand, card_number, set_name, subset, parallel,
-      condition_grade, psa_grade, estimated_value, purchase_price, notes, is_duplicate, is_wishlist,
-      is_graded, image_path, ai_confidence, lookup_source)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      print_run, condition_grade, psa_grade, estimated_value, purchase_price, notes,
+      is_duplicate, is_wishlist, is_graded, is_rookie, is_autograph, is_patch,
+      image_path, ai_confidence, lookup_source)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [c.player_name || '', c.team || '', c.year || null, c.sport || 'Baseball',
      c.brand || '', c.card_number || '', c.set_name || '', c.subset || '', c.parallel || '',
+     c.print_run || '',
      c.condition_grade || 'Near Mint', c.psa_grade || '',
      c.estimated_value || 0, c.purchase_price || 0, c.notes || '',
      c.is_duplicate ? 1 : 0, c.is_wishlist ? 1 : 0, c.is_graded ? 1 : 0,
+     c.is_rookie ? 1 : 0, c.is_autograph ? 1 : 0, c.is_patch ? 1 : 0,
      c.image_path || '', c.ai_confidence || '', c.lookup_source || '']);
   res.json(queryOne('SELECT * FROM cards WHERE id = ?', [id]));
 });
@@ -294,14 +313,17 @@ app.post('/api/cards', (req, res) => {
 app.put('/api/cards/:id', (req, res) => {
   const c = req.body;
   run(`UPDATE cards SET player_name=?, team=?, year=?, sport=?, brand=?, card_number=?, set_name=?,
-      subset=?, parallel=?, condition_grade=?, psa_grade=?, estimated_value=?, purchase_price=?,
-      notes=?, is_duplicate=?, is_wishlist=?, is_graded=?, image_path=?, updated_at=CURRENT_TIMESTAMP
+      subset=?, parallel=?, print_run=?, condition_grade=?, psa_grade=?, estimated_value=?, purchase_price=?,
+      notes=?, is_duplicate=?, is_wishlist=?, is_graded=?, is_rookie=?, is_autograph=?, is_patch=?,
+      image_path=?, updated_at=CURRENT_TIMESTAMP
     WHERE id=?`,
     [c.player_name || '', c.team || '', c.year || null, c.sport || 'Baseball',
      c.brand || '', c.card_number || '', c.set_name || '', c.subset || '', c.parallel || '',
+     c.print_run || '',
      c.condition_grade || 'Near Mint', c.psa_grade || '',
      c.estimated_value || 0, c.purchase_price || 0, c.notes || '',
      c.is_duplicate ? 1 : 0, c.is_wishlist ? 1 : 0, c.is_graded ? 1 : 0,
+     c.is_rookie ? 1 : 0, c.is_autograph ? 1 : 0, c.is_patch ? 1 : 0,
      c.image_path || '', Number(req.params.id)]);
   res.json(queryOne('SELECT * FROM cards WHERE id = ?', [Number(req.params.id)]));
 });
@@ -355,7 +377,7 @@ app.post('/api/upload/bulk', upload.array('images', 50), async (req, res) => {
 // Uses official Finding API when App ID is set; falls back to scraping completed listings HTML
 
 function buildKeywords(card) {
-  const { player_name, year, brand, set_name, card_number, parallel, psa_grade } = card;
+  const { player_name, year, brand, set_name, card_number, parallel, print_run, psa_grade } = card;
   const parts = [player_name, year];
   // Don't double up brand if set_name already starts with it (e.g. "Leaf" + "Leaf HYPE!")
   const setLower = (set_name || '').toLowerCase();
@@ -367,6 +389,7 @@ function buildKeywords(card) {
     if (set_name) parts.push(set_name);
   }
   if (parallel) parts.push(parallel);
+  if (print_run) parts.push(`/${print_run}`);
   if (card_number) parts.push(`#${card_number}`);
   if (psa_grade) parts.push(`PSA ${psa_grade}`);
   return parts.filter(Boolean).join(' ');
@@ -556,9 +579,17 @@ async function lookupViaSportsCardsPro(keywords) {
 }
 
 async function lookupViaGeminiSearch(geminiKey, keywords) {
-  // Try newest model first, fall back to 1.5-flash which has stable Search grounding support
   const models = ['gemini-2.0-flash', 'gemini-1.5-flash'];
-  const prompt = `Search for recent eBay SOLD prices for this sports card: "${keywords}". Find completed auction and Buy It Now sales from the last 90 days. List the actual dollar amounts you find.`;
+  const prompt = `Search eBay for recently SOLD listings of this sports card: "${keywords}".
+
+For each completed sale you find, output it on its own line in EXACTLY this format:
+SALE: $[price] | [Month Day Year] | [listing title]
+
+Example:
+SALE: $14.50 | Jan 10 2025 | 2024 Topps Chrome Patrick Mahomes #100 PSA 10
+SALE: $11.00 | Dec 28 2024 | Mahomes 2024 Topps Chrome Base Refractor
+
+List up to 15 individual sales. Only include real completed transactions with actual sale prices and dates. Show the most recent sales first.`;
 
   for (const model of models) {
     let r;
@@ -571,7 +602,7 @@ async function lookupViaGeminiSearch(geminiKey, keywords) {
           body: JSON.stringify({
             contents: [{ parts: [{ text: prompt }] }],
             tools: [{ google_search: {} }],
-            generationConfig: { temperature: 0.1, maxOutputTokens: 512 }
+            generationConfig: { temperature: 0.1, maxOutputTokens: 1024 }
           }),
           signal: AbortSignal.timeout(15000),
         }
@@ -589,26 +620,104 @@ async function lookupViaGeminiSearch(geminiKey, keywords) {
 
     const data = await r.json();
     const text = (data?.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('').trim();
-    console.log(`Gemini ${model} response (${text.length} chars):`, text.slice(0, 300));
+    console.log(`Gemini ${model} response (${text.length} chars):`, text.slice(0, 400));
 
     if (!text) continue;
 
-    // Extract all dollar amounts from the response (handles prose and JSON)
-    const prices = [];
-    for (const m of text.matchAll(/\$\s*([\d,]+\.?\d{0,2})/g)) {
-      const p = parseFloat(m[1].replace(/,/g, ''));
-      if (p > 0.25 && p < 50000) prices.push(p);
+    // Try to extract structured SALE lines with dates first
+    const recentSales = [];
+    for (const m of text.matchAll(/SALE:\s*\$\s*([\d,]+\.?\d{0,2})\s*\|\s*([A-Za-z]{3,9}\.?\s+\d{1,2}[\s,]+\d{4})\s*\|\s*(.+?)(?=\n|SALE:|$)/g)) {
+      const price = parseFloat(m[1].replace(/,/g, ''));
+      if (price > 0.25 && price < 50000) {
+        recentSales.push({ price, date: m[2].replace(/\.$/, '').trim(), title: m[3].trim() });
+      }
+    }
+
+    const prices = recentSales.length > 0
+      ? recentSales.map(s => s.price)
+      : [];
+
+    // Fall back to unstructured dollar extraction if structured format wasn't used
+    if (prices.length === 0) {
+      for (const m of text.matchAll(/\$\s*([\d,]+\.?\d{0,2})/g)) {
+        const p = parseFloat(m[1].replace(/,/g, ''));
+        if (p > 0.25 && p < 50000) prices.push(p);
+      }
     }
 
     if (prices.length >= 1) {
-      console.log(`Gemini ${model} found ${prices.length} prices:`, prices);
-      return { prices, recentSales: [], source: 'eBay (Google Search)' };
+      console.log(`Gemini ${model}: ${prices.length} prices, ${recentSales.length} with dates`);
+      return { prices, recentSales, source: 'eBay (Google Search)' };
     }
 
     console.log(`Gemini ${model}: no prices found in response`);
   }
 
   throw new Error('Gemini search found no price data');
+}
+
+async function lookupViaGeminiMarketData(geminiKey, keywords) {
+  const models = ['gemini-2.0-flash', 'gemini-1.5-flash'];
+  const prompt = `You are a sports card market analyst. Use Google Search to find REAL recent SOLD prices for this card: "${keywords}"
+
+Search across: eBay completed/sold listings, PWCC Marketplace (pwccmarketplace.com), Goldin Auctions (goldincards.com), Heritage Auctions (ha.com), CollX (collx.app), and 130point.com.
+
+Return ONLY this exact JSON — no markdown, no text before or after, no backticks:
+{
+  "raw": {"avg":0,"low":0,"high":0,"count":0},
+  "grades": {
+    "PSA 7":{"avg":0,"low":0,"high":0,"count":0},
+    "PSA 8":{"avg":0,"low":0,"high":0,"count":0},
+    "PSA 9":{"avg":0,"low":0,"high":0,"count":0},
+    "PSA 10":{"avg":0,"low":0,"high":0,"count":0}
+  },
+  "by_source": {
+    "eBay":{"avg":0,"count":0},
+    "PWCC":{"avg":0,"count":0},
+    "Goldin":{"avg":0,"count":0},
+    "Heritage":{"avg":0,"count":0},
+    "CollX":{"avg":0,"count":0},
+    "130point":{"avg":0,"count":0}
+  },
+  "recent_sales":[
+    {"price":12.50,"date":"Jan 15 2025","grade":"PSA 9","source":"eBay","title":"listing title"}
+  ],
+  "trend":"stable"
+}
+
+Rules:
+- raw = ungraded/raw copies only (no PSA or BGS grade label on the sale)
+- Fill grades ONLY where you found actual sales data — leave as 0 if not found
+- Fill by_source for each platform where you found prices — leave as 0 if not found
+- trend: "up" if prices are rising over last 90 days, "down" if falling, "stable" if flat
+- List up to 20 recent_sales sorted newest first
+- Only include real data found via Google Search — do not estimate`;
+
+  for (const model of models) {
+    try {
+      const r = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            tools: [{ google_search: {} }],
+            generationConfig: { temperature: 0.1, maxOutputTokens: 2048 }
+          }),
+          signal: AbortSignal.timeout(28000),
+        }
+      );
+      if (!r.ok) { const e = await r.text(); console.log(`Gemini ${model} market ${r.status}:`, e.slice(0,150)); continue; }
+      const data = await r.json();
+      const text = (data?.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('');
+      console.log(`Gemini ${model} market (${text.length}):`, text.slice(0, 400));
+      const m = text.match(/\{[\s\S]*\}/);
+      if (!m) { console.log(`Gemini ${model} market: no JSON`); continue; }
+      return JSON.parse(m[0]);
+    } catch (e) { console.log(`Gemini ${model} market error:`, e.message); }
+  }
+  throw new Error('Gemini market data lookup failed');
 }
 
 async function lookupVia130Point(keywords) {
@@ -750,6 +859,68 @@ app.post('/api/cards/:id/set-price', (req, res) => {
   res.json(queryOne('SELECT * FROM cards WHERE id=?', [id]));
 });
 
+// Full multi-source market check — grade-level pricing from eBay, PWCC, Goldin, Heritage, CollX, 130point
+app.post('/api/cards/:id/market-check', async (req, res) => {
+  const id = Number(req.params.id);
+  const card = queryOne('SELECT * FROM cards WHERE id = ?', [id]);
+  if (!card) return res.status(404).json({ error: 'Not found' });
+
+  const geminiKey = getGeminiKey();
+  const anthropicKey = getAnthropicKey();
+  const keywords = buildKeywords(card);
+  let marketData, source = 'Multi-Source';
+
+  if (geminiKey) {
+    try { marketData = await lookupViaGeminiMarketData(geminiKey, keywords); }
+    catch (e) { console.error('Market Gemini failed:', e.message); }
+  }
+
+  // Fallback: Claude estimate with grade multipliers
+  if (!marketData && anthropicKey) {
+    try {
+      const est = await lookupViaClaudeEstimate(anthropicKey, keywords);
+      const base = est.estimated_value;
+      marketData = {
+        raw: { avg: +(base * 0.5).toFixed(2), low: +(base * 0.3).toFixed(2), high: +(base * 0.7).toFixed(2), count: 0 },
+        grades: {
+          'PSA 8': { avg: +(base * 0.75).toFixed(2), low: 0, high: 0, count: 0 },
+          'PSA 9': { avg: base, low: est.value_range_low, high: est.value_range_high, count: 0 },
+          'PSA 10': { avg: +(base * 2.2).toFixed(2), low: 0, high: 0, count: 0 },
+        },
+        by_source: {}, recent_sales: [], trend: 'stable',
+      };
+      source = 'AI Estimate';
+    } catch (e) {
+      return res.status(500).json({ error: 'Market check requires a Gemini or Claude key in Settings' });
+    }
+  }
+
+  if (!marketData) return res.status(500).json({ error: 'Add a Gemini API key in Settings for market check' });
+
+  // Pick best estimated value for this card's specific PSA grade
+  const psaNum = (card.psa_grade || '').toString().replace(/[^0-9.]/g, '');
+  let estimatedValue = 0;
+  if (psaNum && marketData.grades?.[`PSA ${psaNum}`]?.avg > 0) {
+    estimatedValue = marketData.grades[`PSA ${psaNum}`].avg;
+  } else {
+    const vals = Object.values(marketData.grades || {}).map(g => g.avg || 0).filter(v => v > 0).sort((a, b) => a - b);
+    estimatedValue = vals.length ? vals[Math.floor(vals.length / 2)] : (marketData.raw?.avg || 0);
+  }
+
+  if (estimatedValue > 0) {
+    run('UPDATE cards SET estimated_value=?, lookup_source=?, updated_at=CURRENT_TIMESTAMP WHERE id=?', [estimatedValue, source, id]);
+    const allSales = marketData.recent_sales || [];
+    const allHighs = Object.values(marketData.grades || {}).map(g => g.high || 0).filter(v => v > 0);
+    run(`INSERT INTO price_history (card_id, estimated_value, value_range_low, value_range_high, recent_sales_count, recent_sales_json, source, raw_value, price_by_grade_json, sources_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, estimatedValue, marketData.raw?.low || 0, allHighs.length ? Math.max(...allHighs) : 0,
+       allSales.length, JSON.stringify(allSales), source,
+       marketData.raw?.avg || 0, JSON.stringify(marketData.grades || {}), JSON.stringify(marketData.by_source || {})]);
+  }
+
+  res.json({ ...marketData, estimated_value: estimatedValue, keywords });
+});
+
 app.get('/api/debug/price', async (req, res) => {
   const keywords = req.query.q || 'Patrick Mahomes 2017 Panini Prizm';
   const log = [];
@@ -798,6 +969,8 @@ app.get('/api/cards/:id/price-history', (req, res) => {
   res.json(history.map(h => ({
     ...h,
     recent_sales: JSON.parse(h.recent_sales_json || '[]'),
+    price_by_grade: JSON.parse(h.price_by_grade_json || '{}'),
+    sources: JSON.parse(h.sources_json || '{}'),
   })));
 });
 
