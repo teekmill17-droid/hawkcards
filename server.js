@@ -155,28 +155,35 @@ Return exactly:
 confidence: "high"=name clearly printed on card, "medium"=identified from visual cues or partial text, "low"=best guess from limited information.`;
 
 async function recognizeWithClaude(apiKey, base64, mimeType) {
-  const r = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 1024,
-      messages: [{ role: 'user', content: [
-        { type: 'image', source: { type: 'base64', media_type: mimeType, data: base64 } },
-        { type: 'text', text: CARD_PROMPT }
-      ]}]
-    })
-  });
-  if (!r.ok) {
-    const err = await r.json();
-    throw new Error(err?.error?.message || `Claude error: ${r.status}`);
+  const models = ['claude-sonnet-4-6', 'claude-haiku-4-5-20251001'];
+  for (const model of models) {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 1024,
+        messages: [{ role: 'user', content: [
+          { type: 'image', source: { type: 'base64', media_type: mimeType, data: base64 } },
+          { type: 'text', text: CARD_PROMPT }
+        ]}]
+      })
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      console.log(`Claude ${model} failed (${r.status}):`, err?.error?.message || '');
+      if (r.status === 400 || r.status === 404) continue; // model unavailable, try next
+      throw new Error(err?.error?.message || `Claude error: ${r.status}`);
+    }
+    const data = await r.json();
+    console.log(`Claude ${model} recognized card`);
+    return data?.content?.[0]?.text || '';
   }
-  const data = await r.json();
-  return data?.content?.[0]?.text || '';
+  throw new Error('No Claude model available for recognition');
 }
 
 async function recognizeWithGroq(apiKey, base64, mimeType) {
