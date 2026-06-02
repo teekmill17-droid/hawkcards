@@ -285,8 +285,12 @@ app.get('/api/cards', (req, res) => {
     case 'oldest': sql += ' ORDER BY created_at ASC'; break;
     case 'value-high': sql += ' ORDER BY estimated_value DESC'; break;
     case 'value-low': sql += ' ORDER BY estimated_value ASC'; break;
+    case 'value': sql += ' ORDER BY estimated_value DESC'; break;
     case 'year': sql += ' ORDER BY year DESC'; break;
     case 'name': sql += ' ORDER BY player_name ASC'; break;
+    case 'newest': sql += ' ORDER BY created_at DESC'; break;
+    case 'gainers': sql += ` ORDER BY CASE WHEN purchase_price > 0 AND estimated_value > 0 THEN (estimated_value - purchase_price) / purchase_price ELSE -999 END DESC`; break;
+    case 'losers': sql += ` ORDER BY CASE WHEN purchase_price > 0 AND estimated_value > 0 THEN (estimated_value - purchase_price) / purchase_price ELSE -999 END ASC`; break;
     default: sql += ' ORDER BY created_at DESC';
   }
 
@@ -667,22 +671,33 @@ async function lookupViaGeminiMarketData(geminiKey, keywords) {
   const models = ['gemini-2.0-flash', 'gemini-1.5-flash'];
   const prompt = `You are a sports card market analyst. Use Google Search to find REAL recent SOLD prices for this card: "${keywords}"
 
-Search across: eBay completed/sold listings, PWCC Marketplace (pwccmarketplace.com), Goldin Auctions (goldincards.com), Heritage Auctions (ha.com), CollX (collx.app), and 130point.com.
+Search across ALL of these auction houses and marketplaces: eBay completed/sold listings, Fanatics Collect (fanatics.com/collect), Goldin Auctions (goldincards.com), ALT (alt.com), Heritage Auctions (ha.com), REA (reanauctions.com), Lelands (lelands.com), PWCC Marketplace (pwccmarketplace.com), Pristine Auction (pristineauction.com), Huggins & Scott (hugginsandscott.com), SCP Auctions (scpauctions.com), Mile High Card Company (milehighcardco.com), CollX (collx.app), and 130point.com.
+
+Search for sales data from the last 12 months.
 
 Return ONLY this exact JSON — no markdown, no text before or after, no backticks:
 {
   "raw": {"avg":0,"low":0,"high":0,"count":0},
   "grades": {
-    "PSA 7":{"avg":0,"low":0,"high":0,"count":0},
-    "PSA 8":{"avg":0,"low":0,"high":0,"count":0},
-    "PSA 9":{"avg":0,"low":0,"high":0,"count":0},
-    "PSA 10":{"avg":0,"low":0,"high":0,"count":0}
+    "PSA 7":{"avg":0,"low":0,"high":0,"count":0,"pop":0},
+    "PSA 8":{"avg":0,"low":0,"high":0,"count":0,"pop":0},
+    "PSA 9":{"avg":0,"low":0,"high":0,"count":0,"pop":0},
+    "PSA 10":{"avg":0,"low":0,"high":0,"count":0,"pop":0}
   },
+  "pop_report": {"PSA 10":0,"PSA 9":0,"PSA 8":0,"PSA 7":0,"total":0},
   "by_source": {
     "eBay":{"avg":0,"count":0},
-    "PWCC":{"avg":0,"count":0},
+    "Fanatics":{"avg":0,"count":0},
     "Goldin":{"avg":0,"count":0},
+    "ALT":{"avg":0,"count":0},
     "Heritage":{"avg":0,"count":0},
+    "REA":{"avg":0,"count":0},
+    "Lelands":{"avg":0,"count":0},
+    "PWCC":{"avg":0,"count":0},
+    "Pristine":{"avg":0,"count":0},
+    "Huggins & Scott":{"avg":0,"count":0},
+    "SCP":{"avg":0,"count":0},
+    "Mile High":{"avg":0,"count":0},
     "CollX":{"avg":0,"count":0},
     "130point":{"avg":0,"count":0}
   },
@@ -695,9 +710,11 @@ Return ONLY this exact JSON — no markdown, no text before or after, no backtic
 Rules:
 - raw = ungraded/raw copies only (no PSA or BGS grade label on the sale)
 - Fill grades ONLY where you found actual sales data — leave as 0 if not found
+- pop = PSA population count for that grade (from PSA pop report if findable via search)
+- Fill pop_report with PSA population numbers if available from search
 - Fill by_source for each platform where you found prices — leave as 0 if not found
 - trend: "up" if prices are rising over last 90 days, "down" if falling, "stable" if flat
-- List up to 20 recent_sales sorted newest first
+- List up to 20 recent_sales sorted newest first, covering the last 12 months
 - Only include real data found via Google Search — do not estimate`;
 
   for (const model of models) {
@@ -924,6 +941,49 @@ app.post('/api/cards/:id/market-check', async (req, res) => {
        allSales.length, JSON.stringify(allSales), source,
        marketData.raw?.avg || 0, JSON.stringify(marketData.grades || {}), JSON.stringify(marketData.by_source || {})]);
   }
+
+  res.json({ ...marketData, estimated_value: estimatedValue, keywords });
+});
+
+// Market search — looks up any card by keywords, no collection required, no DB save
+app.post('/api/market-price', async (req, res) => {
+  const { keywords } = req.body || {};
+  if (!keywords) return res.status(400).json({ error: 'keywords required' });
+
+  const geminiKey = getGeminiKey();
+  const anthropicKey = getAnthropicKey();
+  let marketData;
+
+  if (geminiKey) {
+    try { marketData = await lookupViaGeminiMarketData(geminiKey, keywords); }
+    catch (e) { console.error('Market-price Gemini failed:', e.message); }
+  }
+
+  // Fallback: Claude estimate with grade multipliers
+  if (!marketData && anthropicKey) {
+    try {
+      const est = await lookupViaClaudeEstimate(anthropicKey, keywords);
+      const base = est.estimated_value;
+      marketData = {
+        raw: { avg: +(base * 0.5).toFixed(2), low: +(base * 0.3).toFixed(2), high: +(base * 0.7).toFixed(2), count: 0 },
+        grades: {
+          'PSA 8': { avg: +(base * 0.75).toFixed(2), low: 0, high: 0, count: 0, pop: 0 },
+          'PSA 9': { avg: base, low: est.value_range_low, high: est.value_range_high, count: 0, pop: 0 },
+          'PSA 10': { avg: +(base * 2.2).toFixed(2), low: 0, high: 0, count: 0, pop: 0 },
+        },
+        pop_report: { 'PSA 10': 0, 'PSA 9': 0, 'PSA 8': 0, total: 0 },
+        by_source: {}, recent_sales: [], trend: 'stable',
+      };
+    } catch (e) {
+      return res.status(500).json({ error: 'Market search requires a Gemini or Claude key in Settings' });
+    }
+  }
+
+  if (!marketData) return res.status(500).json({ error: 'Add a Gemini API key in Settings for market search' });
+
+  // Derive a single estimated value (median of grade avgs)
+  const vals = Object.values(marketData.grades || {}).map(g => g.avg || 0).filter(v => v > 0).sort((a, b) => a - b);
+  const estimatedValue = vals.length ? vals[Math.floor(vals.length / 2)] : (marketData.raw?.avg || 0);
 
   res.json({ ...marketData, estimated_value: estimatedValue, keywords });
 });

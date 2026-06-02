@@ -979,3 +979,49 @@ body {
 .src-badge.heritage { background: rgba(239,68,68,0.08); color: var(--red); border-color: rgba(239,68,68,0.15); }
 .src-badge.collx { background: rgba(139,92,246,0.1); color: #a78bfa; border-color: rgba(139,92,246,0.2); }
 
+/* ========== COLLECTION TOOLBAR ========== */
+.collection-toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; gap: 8px; }
+.sort-tabs { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+.sort-tabs::-webkit-scrollbar { display: none; }
+.sort-tab { background: transparent; border: 1px solid var(--border); border-radius: 8px; color: var(--text-3); font-size: 12px; font-weight: 600; padding: 5px 12px; cursor: pointer; white-space: nowrap; transition: all 0.15s; }
+.sort-tab:hover { border-color: var(--accent); color: var(--accent); }
+.sort-tab.active { background: var(--accent); border-color: var(--accent); color: #000; }
+.view-toggle { display: flex; gap: 3px; flex-shrink: 0; }
+.view-btn { background: transparent; border: 1px solid var(--border); border-radius: 7px; color: var(--text-4); padding: 5px 8px; cursor: pointer; transition: all 0.15s; line-height: 1; display: flex; align-items: center; justify-content: center; }
+.view-btn.active { background: var(--surface-2); border-color: var(--accent); color: var(--accent); }
+
+/* ========== LADDER LIST ========== */
+.ladder-list { display: flex; flex-direction: column; gap: 6px; }
+.ldr-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; cursor: pointer; transition: border-color 0.15s, background 0.15s; }
+.ldr-row:hover { border-color: rgba(255,205,0,0.3); background: var(--surface-2); }
+.ldr-rank { font-size: 11px; font-weight: 700; color: var(--text-4); width: 22px; text-align: center; flex-shrink: 0; }
+.ldr-thumb { width: 40px; height: 56px; border-radius: 5px; overflow: hidden; background: var(--surface-2); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.ldr-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.ldr-info { flex: 1; min-width: 0; }
+.ldr-name { font-size: 13px; font-weight: 700; color: var(--text); margin: 0 0 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ldr-meta { font-size: 11px; color: var(--text-4); margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ldr-grade { font-size: 9px; font-weight: 700; padding: 3px 7px; border-radius: 5px; text-transform: uppercase; letter-spacing: 0.4px; white-space: nowrap; flex-shrink: 0; }
+.ldr-grade.psa { background: rgba(255,205,0,0.12); color: var(--accent); }
+.ldr-grade.raw { background: rgba(255,255,255,0.07); color: var(--text-3); }
+.ldr-val { text-align: right; flex-shrink: 0; min-width: 70px; }
+.ldr-price { font-size: 14px; font-weight: 800; color: var(--text); margin: 0 0 2px; }
+.ldr-change { font-size: 11px; font-weight: 700; }
+.ldr-change.up { color: #34d399; }
+.ldr-change.down { color: #ef4444; }
+
+/* ========== MARKET SEARCH VIEW ========== */
+.market-wrap { padding: 0 0 40px; }
+.market-search-header { margin-bottom: 16px; }
+.market-subtitle { font-size: 13px; color: var(--text-4); margin: 4px 0 0; }
+.market-search-bar { display: flex; align-items: center; gap: 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 10px 14px; margin-bottom: 16px; }
+.market-search-bar input { flex: 1; background: none; border: none; outline: none; color: var(--text); font-size: 14px; font-family: inherit; }
+.market-search-bar input::placeholder { color: var(--text-4); }
+.market-loading { text-align: center; padding: 40px 0; color: var(--text-4); font-size: 13px; }
+.market-empty { text-align: center; padding: 40px 0; color: var(--text-4); font-size: 13px; }
+.market-result { }
+.market-result-hdr { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 14px; gap: 12px; }
+.market-result-title { font-size: 15px; font-weight: 700; color: var(--text); margin: 0 0 4px; }
+
+/* Pop report in grade cells */
+.grade-pop { font-size: 10px; color: var(--text-4); margin: 2px 0 0; }
+
