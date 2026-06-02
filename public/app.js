@@ -22,6 +22,8 @@ let cameraStream = null;
 let reviewCardData = null;
 let bulkReviewCards = [];
 let currentDetailHistory = [];
+let viewMode = 'list';
+let sortMode = 'value';
 
 // ========== INIT ==========
 document.addEventListener('DOMContentLoaded', async () => {
@@ -52,6 +54,20 @@ function switchView(view) {
   if (view === 'scan') resetScan();
   if (view === 'stats') loadStats();
   if (view === 'collection') loadCards();
+}
+
+function setViewMode(mode) {
+  viewMode = mode;
+  document.getElementById('view-grid-btn')?.classList.toggle('active', mode === 'grid');
+  document.getElementById('view-list-btn')?.classList.toggle('active', mode === 'list');
+  loadCards();
+}
+
+function setSortMode(mode, el) {
+  sortMode = mode;
+  document.querySelectorAll('.sort-tab').forEach(t => t.classList.remove('active'));
+  if (el) el.classList.add('active');
+  loadCards();
 }
 
 function openScan() { switchView('scan'); }
@@ -176,7 +192,7 @@ function buildSportFilters() {
 
 async function loadCards() {
   const search = document.getElementById('search-input').value;
-  const sort = document.getElementById('sort-select').value;
+  const sort = sortMode;
   const clearBtn = document.getElementById('clear-search');
   clearBtn.style.display = search ? 'flex' : 'none';
 
@@ -200,31 +216,38 @@ async function loadCards() {
     }
 
     empty.style.display = 'none';
-    grid.innerHTML = cards.map((card, i) => `
-      <div class="card-tile" style="animation-delay:${i * 0.03}s" onclick="openDetail(${card.id})">
-        ${card.image_path ? `
-          <div class="card-img-wrap">
-            <img src="${card.image_path}" alt="" loading="lazy" onerror="handleImgError(this,'${card.sport}')">
-            <div class="card-img-gradient"></div>
-            ${card.is_duplicate ? '<span class="dupe-badge">DUPE</span>' : ''}
-            ${card.is_graded ? `<span class="graded-badge">${card.psa_grade || 'GRADED'}</span>` : ''}
-          </div>
-        ` : `
-          <div class="card-placeholder" style="position:relative">
-            ${sportEmoji[card.sport] || '🃏'}
-            ${card.is_duplicate ? '<span class="dupe-badge">DUPE</span>' : ''}
-          </div>
-        `}
-        <div class="card-body">
-          <p class="card-name">${esc(card.player_name || 'Unknown')}</p>
-          <p class="card-meta">${[card.team, card.year, card.brand, card.set_name].filter(Boolean).join(' · ')}</p>
-          <div class="card-footer">
-            <span class="card-condition">${(card.condition_grade || '').split(' ')[0]}</span>
-            ${card.estimated_value > 0 ? `<span class="card-value">$${Number(card.estimated_value).toLocaleString()}</span>` : ''}
+
+    if (viewMode === 'list') {
+      grid.className = 'ladder-list';
+      grid.innerHTML = cards.map((card, i) => renderLadderRow(card, i + 1)).join('');
+    } else {
+      grid.className = 'cards-grid';
+      grid.innerHTML = cards.map((card, i) => `
+        <div class="card-tile" style="animation-delay:${i * 0.03}s" onclick="openDetail(${card.id})">
+          ${card.image_path ? `
+            <div class="card-img-wrap">
+              <img src="${card.image_path}" alt="" loading="lazy" onerror="handleImgError(this,'${card.sport}')">
+              <div class="card-img-gradient"></div>
+              ${card.is_duplicate ? '<span class="dupe-badge">DUPE</span>' : ''}
+              ${card.is_graded ? `<span class="graded-badge">${card.psa_grade || 'GRADED'}</span>` : ''}
+            </div>
+          ` : `
+            <div class="card-placeholder" style="position:relative">
+              ${sportEmoji[card.sport] || '🃏'}
+              ${card.is_duplicate ? '<span class="dupe-badge">DUPE</span>' : ''}
+            </div>
+          `}
+          <div class="card-body">
+            <p class="card-name">${esc(card.player_name || 'Unknown')}</p>
+            <p class="card-meta">${[card.team, card.year, card.brand, card.set_name].filter(Boolean).join(' · ')}</p>
+            <div class="card-footer">
+              <span class="card-condition">${(card.condition_grade || '').split(' ')[0]}</span>
+              ${card.estimated_value > 0 ? `<span class="card-value">$${Number(card.estimated_value).toLocaleString()}</span>` : ''}
+            </div>
           </div>
         </div>
-      </div>
-    `).join('');
+      `).join('');
+    }
 
     // Update header stats
     const allCards = await (await fetch('/api/cards')).json();
@@ -235,6 +258,33 @@ async function loadCards() {
   } catch (e) {
     console.error('Failed to load cards:', e);
   }
+}
+
+function renderLadderRow(card, rank) {
+  const pct = card.purchase_price > 0 && card.estimated_value > 0
+    ? ((card.estimated_value - card.purchase_price) / card.purchase_price * 100) : null;
+  const changeHtml = pct !== null
+    ? `<span class="ldr-change ${pct >= 0 ? 'up' : 'down'}">${pct >= 0 ? '↑' : '↓'} ${Math.abs(pct).toFixed(1)}%</span>`
+    : '';
+  const grade = card.is_graded ? `PSA ${card.psa_grade || '?'}` : 'Raw';
+  const isGraded = !!card.is_graded;
+  const cardMeta = [card.year, card.set_name || card.brand, card.card_number ? `#${card.card_number}` : null, card.is_rookie ? 'RC' : null].filter(Boolean).join(' · ');
+  const thumb = card.image_path
+    ? `<img src="${card.image_path}" alt="" onerror="this.style.display='none'">`
+    : `<span style="font-size:18px">${sportEmoji[card.sport] || '🃏'}</span>`;
+  return `<div class="ldr-row" onclick="openDetail(${card.id})">
+    <span class="ldr-rank">${rank}</span>
+    <div class="ldr-thumb">${thumb}</div>
+    <div class="ldr-info">
+      <p class="ldr-name">${esc(card.player_name || 'Unknown')}</p>
+      <p class="ldr-meta">${esc(cardMeta)}</p>
+    </div>
+    <span class="ldr-grade ${isGraded ? 'psa' : 'raw'}">${grade}</span>
+    <div class="ldr-val">
+      <p class="ldr-price">${card.estimated_value > 0 ? `$${Number(card.estimated_value).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}` : '—'}</p>
+      ${changeHtml}
+    </div>
+  </div>`;
 }
 
 function clearSearch() {
@@ -557,6 +607,7 @@ function buildPriceBreakdown(priceByGrade, rawValue, sources) {
       <p class="grade-price">${fmt(data.avg)}</p>
       ${data.low > 0 && data.high > 0 ? `<p class="grade-range">${fmt(data.low)} – ${fmt(data.high)}</p>` : ''}
       ${data.count > 0 ? `<p class="grade-count">${data.count} sale${data.count !== 1 ? 's' : ''}</p>` : ''}
+      ${data.pop > 0 ? `<p class="grade-pop">Pop ${data.pop.toLocaleString()}</p>` : ''}
     </div>`;
   };
   const rawData = rawValue > 0 ? { avg: rawValue, low: 0, high: 0, count: 0 } : null;
@@ -1684,6 +1735,47 @@ function editBulkCard(index) {
   }
 
   switchView('add');
+}
+
+// ========== MARKET SEARCH ==========
+async function searchMarket() {
+  const query = document.getElementById('market-input')?.value.trim();
+  if (!query) return;
+  const el = document.getElementById('market-results');
+  el.innerHTML = '<div class="market-loading">Searching eBay, PWCC, Goldin, Heritage, Fanatics...</div>';
+  try {
+    const res = await fetch('/api/market-price', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ keywords: query })
+    });
+    const data = await res.json();
+    if (data.error) { el.innerHTML = `<p class="market-empty">${esc(data.error)}</p>`; return; }
+    el.innerHTML = renderMarketResult(data, query);
+  } catch (e) {
+    el.innerHTML = '<p class="market-empty">Search failed — check your Gemini key in Settings</p>';
+  }
+}
+
+function renderMarketResult(data, query) {
+  const gradeBreakdown = buildPriceBreakdown(data.grades, data.raw?.avg, data.by_source);
+  const comps = buildRecentComps(data.recent_sales || []);
+  const trendColor = data.trend === 'up' ? '#34d399' : data.trend === 'down' ? '#ef4444' : 'var(--text-3)';
+  const trendIcon = data.trend === 'up' ? '↑' : data.trend === 'down' ? '↓' : '→';
+  return `<div class="market-result">
+    <div class="market-result-hdr">
+      <div>
+        <p class="market-result-title">${esc(query)}</p>
+        ${data.trend ? `<span style="font-size:12px;font-weight:700;color:${trendColor}">${trendIcon} ${data.trend} trend</span>` : ''}
+      </div>
+      ${data.estimated_value > 0 ? `<div style="text-align:right">
+        <p style="font-size:26px;font-weight:800;color:var(--accent)">$${Number(data.estimated_value).toFixed(2)}</p>
+        <p style="font-size:10px;color:var(--text-4)">est. value</p>
+      </div>` : ''}
+    </div>
+    ${gradeBreakdown}
+    ${comps}
+  </div>`;
 }
 
 // ========== UTILITY ==========
