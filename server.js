@@ -3,6 +3,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const https = require('https');
+const crypto = require('crypto');
 
 const os = require('os');
 const { initDB, query, queryOne, run } = require('./database');
@@ -31,6 +32,50 @@ function getGroqKey() {
 function getGeminiKey() {
   const row = queryOne("SELECT value FROM settings WHERE key = 'gemini_api_key'");
   return process.env.GEMINI_API_KEY || (row ? row.value : null);
+}
+
+// --- Auth helpers ---
+async function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  return new Promise((resolve, reject) => {
+    crypto.scrypt(password, salt, 64, (err, key) => {
+      if (err) reject(err);
+      else resolve(`${salt}:${key.toString('hex')}`);
+    });
+  });
+}
+
+async function verifyPassword(password, stored) {
+  const [salt, key] = stored.split(':');
+  return new Promise((resolve, reject) => {
+    crypto.scrypt(password, salt, 64, (err, derived) => {
+      if (err) reject(err);
+      else {
+        try { resolve(crypto.timingSafeEqual(Buffer.from(key, 'hex'), derived)); }
+        catch { resolve(false); }
+      }
+    });
+  });
+}
+
+function generateToken() {
+  return crypto.randomBytes(32).toString('hex');
+}
+
+function getUserFromToken(req) {
+  const auth = req.headers.authorization || '';
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
+  if (!token) return null;
+  const session = queryOne('SELECT user_id FROM sessions WHERE token = ?', [token]);
+  if (!session) return null;
+  return queryOne('SELECT id, username FROM users WHERE id = ?', [session.user_id]);
+}
+
+function requireAuth(req, res, next) {
+  const user = getUserFromToken(req);
+  if (!user) return res.status(401).json({ error: 'Not authenticated' });
+  req.user = user;
+  next();
 }
 
 // Middleware
@@ -93,6 +138,54 @@ app.post('/api/settings/groq', (req, res) => {
   if (!apiKey) return res.status(400).json({ error: 'API key required' });
   run("INSERT OR REPLACE INTO settings (key, value) VALUES ('groq_api_key', ?)", [apiKey]);
   res.json({ success: true });
+});
+
+// --- Auth ---
+app.post('/api/auth/register', async (req, res) => {
+  const { username, password } = req.body || {};
+  if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
+  if (username.trim().length < 3) return res.status(400).json({ error: 'Username must be at least 3 characters' });
+  if (password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+  const existing = queryOne('SELECT id FROM users WHERE username = ?', [username.trim()]);
+  if (existing) return res.status(400).json({ error: 'Username already taken' });
+  try {
+    const hash = await hashPassword(password);
+    const userId = run('INSERT INTO users (username, password_hash) VALUES (?, ?)', [username.trim(), hash]);
+    const token = generateToken();
+    run('INSERT INTO sessions (token, user_id) VALUES (?, ?)', [token, userId]);
+    res.json({ token, username: username.trim(), userId });
+  } catch (e) {
+    res.status(500).json({ error: 'Registration failed' });
+  }
+});
+
+app.post('/api/auth/login', async (req, res) => {
+  const { username, password } = req.body || {};
+  if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
+  const user = queryOne('SELECT * FROM users WHERE username = ?', [username.trim()]);
+  if (!user) return res.status(401).json({ error: 'Invalid username or password' });
+  try {
+    const valid = await verifyPassword(password, user.password_hash);
+    if (!valid) return res.status(401).json({ error: 'Invalid username or password' });
+    const token = generateToken();
+    run('INSERT INTO sessions (token, user_id) VALUES (?, ?)', [token, user.id]);
+    res.json({ token, username: user.username, userId: user.id });
+  } catch (e) {
+    res.status(500).json({ error: 'Login failed' });
+  }
+});
+
+app.post('/api/auth/logout', (req, res) => {
+  const auth = req.headers.authorization || '';
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
+  if (token) run('DELETE FROM sessions WHERE token = ?', [token]);
+  res.json({ success: true });
+});
+
+app.get('/api/auth/me', (req, res) => {
+  const user = getUserFromToken(req);
+  if (!user) return res.status(401).json({ error: 'Not authenticated' });
+  res.json({ username: user.username, userId: user.id });
 });
 
 // --- AI Card Recognition ---
@@ -266,10 +359,12 @@ app.post('/api/recognize', async (req, res) => {
 });
 
 // --- Cards CRUD ---
-app.get('/api/cards', (req, res) => {
+app.get('/api/cards', requireAuth, (req, res) => {
   const { sport, search, sort, wishlist, duplicates } = req.query;
   let sql = 'SELECT * FROM cards WHERE 1=1';
   const params = [];
+
+  sql += ' AND user_id = ?'; params.push(req.user.id);
 
   if (wishlist === '1') { sql += ' AND is_wishlist = 1'; }
   else if (wishlist !== 'all') { sql += ' AND is_wishlist = 0'; }
@@ -297,19 +392,20 @@ app.get('/api/cards', (req, res) => {
   res.json(query(sql, params));
 });
 
-app.get('/api/cards/:id', (req, res) => {
+app.get('/api/cards/:id', requireAuth, (req, res) => {
   const card = queryOne('SELECT * FROM cards WHERE id = ?', [Number(req.params.id)]);
   if (!card) return res.status(404).json({ error: 'Not found' });
+  if (card.user_id !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
   res.json(card);
 });
 
-app.post('/api/cards', (req, res) => {
+app.post('/api/cards', requireAuth, (req, res) => {
   const c = req.body;
   const id = run(`INSERT INTO cards (player_name, team, year, sport, brand, card_number, set_name, subset, parallel,
       print_run, condition_grade, psa_grade, estimated_value, purchase_price, notes,
       is_duplicate, is_wishlist, is_graded, is_rookie, is_autograph, is_patch,
-      image_path, ai_confidence, lookup_source)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      image_path, ai_confidence, lookup_source, user_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [c.player_name || '', c.team || '', c.year || null, c.sport || 'Baseball',
      c.brand || '', c.card_number || '', c.set_name || '', c.subset || '', c.parallel || '',
      c.print_run || '',
@@ -317,17 +413,20 @@ app.post('/api/cards', (req, res) => {
      c.estimated_value || 0, c.purchase_price || 0, c.notes || '',
      c.is_duplicate ? 1 : 0, c.is_wishlist ? 1 : 0, c.is_graded ? 1 : 0,
      c.is_rookie ? 1 : 0, c.is_autograph ? 1 : 0, c.is_patch ? 1 : 0,
-     c.image_path || '', c.ai_confidence || '', c.lookup_source || '']);
+     c.image_path || '', c.ai_confidence || '', c.lookup_source || '', req.user.id]);
   res.json(queryOne('SELECT * FROM cards WHERE id = ?', [id]));
 });
 
-app.put('/api/cards/:id', (req, res) => {
+app.put('/api/cards/:id', requireAuth, (req, res) => {
+  const existing = queryOne('SELECT user_id FROM cards WHERE id = ?', [Number(req.params.id)]);
+  if (!existing) return res.status(404).json({ error: 'Not found' });
+  if (existing.user_id !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
   const c = req.body;
   run(`UPDATE cards SET player_name=?, team=?, year=?, sport=?, brand=?, card_number=?, set_name=?,
       subset=?, parallel=?, print_run=?, condition_grade=?, psa_grade=?, estimated_value=?, purchase_price=?,
       notes=?, is_duplicate=?, is_wishlist=?, is_graded=?, is_rookie=?, is_autograph=?, is_patch=?,
       image_path=?, updated_at=CURRENT_TIMESTAMP
-    WHERE id=?`,
+    WHERE id=? AND user_id=?`,
     [c.player_name || '', c.team || '', c.year || null, c.sport || 'Baseball',
      c.brand || '', c.card_number || '', c.set_name || '', c.subset || '', c.parallel || '',
      c.print_run || '',
@@ -335,18 +434,20 @@ app.put('/api/cards/:id', (req, res) => {
      c.estimated_value || 0, c.purchase_price || 0, c.notes || '',
      c.is_duplicate ? 1 : 0, c.is_wishlist ? 1 : 0, c.is_graded ? 1 : 0,
      c.is_rookie ? 1 : 0, c.is_autograph ? 1 : 0, c.is_patch ? 1 : 0,
-     c.image_path || '', Number(req.params.id)]);
+     c.image_path || '', Number(req.params.id), req.user.id]);
   res.json(queryOne('SELECT * FROM cards WHERE id = ?', [Number(req.params.id)]));
 });
 
-app.delete('/api/cards/:id', (req, res) => {
-  const card = queryOne('SELECT image_path FROM cards WHERE id = ?', [Number(req.params.id)]);
-  if (card && card.image_path) {
+app.delete('/api/cards/:id', requireAuth, (req, res) => {
+  const card = queryOne('SELECT image_path, user_id FROM cards WHERE id = ?', [Number(req.params.id)]);
+  if (!card) return res.status(404).json({ error: 'Not found' });
+  if (card.user_id !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
+  if (card.image_path) {
     const fname = card.image_path.replace('/uploads/', '');
     const imgPath = path.join(uploadsDir, fname);
     if (fs.existsSync(imgPath)) fs.unlinkSync(imgPath);
   }
-  run('DELETE FROM cards WHERE id = ?', [Number(req.params.id)]);
+  run('DELETE FROM cards WHERE id = ? AND user_id = ?', [Number(req.params.id), req.user.id]);
   res.json({ success: true });
 });
 
@@ -870,12 +971,15 @@ app.post('/api/ebay-price', async (req, res) => {
 });
 
 // Save a price result — used by both manual entry and client-side lookups
-app.post('/api/cards/:id/set-price', (req, res) => {
+app.post('/api/cards/:id/set-price', requireAuth, (req, res) => {
   const id = Number(req.params.id);
+  const card = queryOne('SELECT user_id FROM cards WHERE id = ?', [id]);
+  if (!card) return res.status(404).json({ error: 'Not found' });
+  if (card.user_id !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
   const { price, source, range_low, range_high, sales_count, recent_sales } = req.body;
   if (!price || isNaN(price)) return res.status(400).json({ error: 'Price required' });
-  run('UPDATE cards SET estimated_value=?, lookup_source=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
-    [price, source || 'Manual', id]);
+  run('UPDATE cards SET estimated_value=?, lookup_source=?, updated_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=?',
+    [price, source || 'Manual', id, req.user.id]);
   run(`INSERT INTO price_history (card_id, estimated_value, value_range_low, value_range_high, recent_sales_count, recent_sales_json, source)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
     [id, price, range_low || 0, range_high || 0, sales_count || 0,
@@ -884,10 +988,11 @@ app.post('/api/cards/:id/set-price', (req, res) => {
 });
 
 // Full multi-source market check — grade-level pricing from eBay, PWCC, Goldin, Heritage, CollX, 130point
-app.post('/api/cards/:id/market-check', async (req, res) => {
+app.post('/api/cards/:id/market-check', requireAuth, async (req, res) => {
   const id = Number(req.params.id);
   const card = queryOne('SELECT * FROM cards WHERE id = ?', [id]);
   if (!card) return res.status(404).json({ error: 'Not found' });
+  if (card.user_id !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
 
   const geminiKey = getGeminiKey();
   const anthropicKey = getAnthropicKey();
@@ -1028,7 +1133,10 @@ app.get('/api/debug/storage', (req, res) => {
   res.json({ DATA_DIR, uploadsDir, fileCount: files.length, files, IS_PROD });
 });
 
-app.get('/api/cards/:id/price-history', (req, res) => {
+app.get('/api/cards/:id/price-history', requireAuth, (req, res) => {
+  const card = queryOne('SELECT user_id FROM cards WHERE id = ?', [Number(req.params.id)]);
+  if (!card) return res.status(404).json({ error: 'Not found' });
+  if (card.user_id !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
   const history = query(
     'SELECT * FROM price_history WHERE card_id = ? ORDER BY looked_up_at ASC',
     [Number(req.params.id)]
@@ -1042,8 +1150,8 @@ app.get('/api/cards/:id/price-history', (req, res) => {
 });
 
 // --- CSV Export ---
-app.get('/api/export/csv', (req, res) => {
-  const cards = query('SELECT * FROM cards ORDER BY created_at DESC');
+app.get('/api/export/csv', requireAuth, (req, res) => {
+  const cards = query('SELECT * FROM cards WHERE user_id = ? ORDER BY created_at DESC', [req.user.id]);
   const headers = ['ID','Player Name','Team','Year','Sport','Brand','Card #','Set','Subset','Parallel','Condition','PSA Grade','Est. Value','Purchase Price','Duplicate','Wishlist','Graded','Notes','Date Added'];
   const rows = cards.map(c => [
     c.id, c.player_name, c.team, c.year || '', c.sport, c.brand, c.card_number,
@@ -1059,27 +1167,28 @@ app.get('/api/export/csv', (req, res) => {
 });
 
 // --- Stats ---
-app.get('/api/stats', (req, res) => {
-  const total = queryOne('SELECT COUNT(*) as count FROM cards WHERE is_wishlist = 0');
-  const tv = queryOne('SELECT COALESCE(SUM(estimated_value), 0) as total FROM cards WHERE is_wishlist = 0');
-  const dupes = queryOne('SELECT COUNT(*) as count FROM cards WHERE is_duplicate = 1 AND is_wishlist = 0');
-  const wish = queryOne('SELECT COUNT(*) as count FROM cards WHERE is_wishlist = 1');
-  const graded = queryOne('SELECT COUNT(*) as count FROM cards WHERE is_graded = 1 AND is_wishlist = 0');
-  const bySport = query("SELECT sport, COUNT(*) as count, COALESCE(SUM(estimated_value), 0) as value FROM cards WHERE is_wishlist = 0 GROUP BY sport");
-  const byBrand = query("SELECT brand, COUNT(*) as count, COALESCE(SUM(estimated_value), 0) as value FROM cards WHERE is_wishlist = 0 AND brand != '' GROUP BY brand ORDER BY count DESC LIMIT 10");
-  const topCards = query("SELECT * FROM cards WHERE is_wishlist = 0 AND estimated_value > 0 ORDER BY estimated_value DESC LIMIT 10");
-  const recentCards = query("SELECT * FROM cards WHERE is_wishlist = 0 ORDER BY created_at DESC LIMIT 5");
+app.get('/api/stats', requireAuth, (req, res) => {
+  const uid = req.user.id;
+  const total = queryOne('SELECT COUNT(*) as count FROM cards WHERE is_wishlist = 0 AND user_id = ?', [uid]);
+  const tv = queryOne('SELECT COALESCE(SUM(estimated_value), 0) as total FROM cards WHERE is_wishlist = 0 AND user_id = ?', [uid]);
+  const dupes = queryOne('SELECT COUNT(*) as count FROM cards WHERE is_duplicate = 1 AND is_wishlist = 0 AND user_id = ?', [uid]);
+  const wish = queryOne('SELECT COUNT(*) as count FROM cards WHERE is_wishlist = 1 AND user_id = ?', [uid]);
+  const graded = queryOne('SELECT COUNT(*) as count FROM cards WHERE is_graded = 1 AND is_wishlist = 0 AND user_id = ?', [uid]);
+  const bySport = query("SELECT sport, COUNT(*) as count, COALESCE(SUM(estimated_value), 0) as value FROM cards WHERE is_wishlist = 0 AND user_id = ? GROUP BY sport", [uid]);
+  const byBrand = query("SELECT brand, COUNT(*) as count, COALESCE(SUM(estimated_value), 0) as value FROM cards WHERE is_wishlist = 0 AND brand != '' AND user_id = ? GROUP BY brand ORDER BY count DESC LIMIT 10", [uid]);
+  const topCards = query("SELECT * FROM cards WHERE is_wishlist = 0 AND estimated_value > 0 AND user_id = ? ORDER BY estimated_value DESC LIMIT 10", [uid]);
+  const recentCards = query("SELECT * FROM cards WHERE is_wishlist = 0 AND user_id = ? ORDER BY created_at DESC LIMIT 5", [uid]);
 
   // Portfolio value over time — one point per day, sum of all card values
   const portfolioHistory = query(`
     SELECT DATE(looked_up_at) as date, SUM(ph.estimated_value) as value
     FROM price_history ph
     JOIN cards c ON c.id = ph.card_id
-    WHERE c.is_wishlist = 0
+    WHERE c.is_wishlist = 0 AND c.user_id = ?
     GROUP BY DATE(looked_up_at)
     ORDER BY date ASC
     LIMIT 90
-  `);
+  `, [uid]);
 
   // Top movers — cards with the biggest $ change between first and last lookup
   const movers = query(`
@@ -1094,10 +1203,10 @@ app.get('/api/stats', (req, res) => {
     JOIN price_history last_ph ON last_ph.id = (
       SELECT id FROM price_history WHERE card_id = c.id ORDER BY looked_up_at DESC LIMIT 1
     )
-    WHERE c.is_wishlist = 0 AND first_ph.id != last_ph.id
+    WHERE c.is_wishlist = 0 AND c.user_id = ? AND first_ph.id != last_ph.id
     ORDER BY ABS(change) DESC
     LIMIT 5
-  `);
+  `, [uid]);
 
   res.json({
     total: total.count, totalValue: tv.total,

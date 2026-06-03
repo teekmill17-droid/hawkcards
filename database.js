@@ -72,6 +72,19 @@ async function initDB() {
     )
   `);
 
+  db.run(`CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT UNIQUE NOT NULL COLLATE NOCASE,
+    password_hash TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS sessions (
+    token TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
   // Schema migrations — safe to run multiple times (ALTER TABLE fails silently if column exists)
   const migrations = [
     "ALTER TABLE cards ADD COLUMN print_run TEXT DEFAULT ''",
@@ -81,6 +94,8 @@ async function initDB() {
     "ALTER TABLE price_history ADD COLUMN raw_value REAL DEFAULT 0",
     "ALTER TABLE price_history ADD COLUMN price_by_grade_json TEXT DEFAULT '{}'",
     "ALTER TABLE price_history ADD COLUMN sources_json TEXT DEFAULT '[]'",
+    "ALTER TABLE cards ADD COLUMN user_id INTEGER DEFAULT 1",
+    "ALTER TABLE price_history ADD COLUMN user_id INTEGER DEFAULT 1",
   ];
   for (const m of migrations) {
     try { db.run(m); } catch (e) { /* column already exists */ }

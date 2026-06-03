@@ -24,9 +24,102 @@ let bulkReviewCards = [];
 let currentDetailHistory = [];
 let viewMode = 'list';
 let sortMode = 'value';
+let authToken = localStorage.getItem('hawk_token') || null;
+let currentUser = null;
+
+// ========== AUTH API HELPER ==========
+function api(url, opts = {}) {
+  const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+  if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+  return fetch(url, { ...opts, headers });
+}
+
+// ========== AUTH FUNCTIONS ==========
+async function checkAuth() {
+  if (!authToken) { showLoginModal(); return false; }
+  try {
+    const res = await fetch('/api/auth/me', { headers: { 'Authorization': `Bearer ${authToken}` } });
+    if (!res.ok) { authToken = null; localStorage.removeItem('hawk_token'); showLoginModal(); return false; }
+    currentUser = await res.json();
+    return true;
+  } catch (e) { showLoginModal(); return false; }
+}
+
+function showLoginModal() {
+  document.getElementById('login-modal').style.display = 'flex';
+}
+
+function hideLoginModal() {
+  document.getElementById('login-modal').style.display = 'none';
+}
+
+function showLoginTab(tab) {
+  document.getElementById('login-form').style.display = tab === 'login' ? 'block' : 'none';
+  document.getElementById('register-form').style.display = tab === 'register' ? 'block' : 'none';
+  document.getElementById('tab-login').classList.toggle('active', tab === 'login');
+  document.getElementById('tab-register').classList.toggle('active', tab === 'register');
+  document.getElementById('login-error').style.display = 'none';
+  document.getElementById('reg-error').style.display = 'none';
+}
+
+async function submitLogin() {
+  const username = document.getElementById('login-username').value.trim();
+  const password = document.getElementById('login-password').value;
+  const errEl = document.getElementById('login-error');
+  errEl.style.display = 'none';
+  if (!username || !password) { errEl.textContent = 'Enter username and password'; errEl.style.display = 'block'; return; }
+  try {
+    const res = await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }) });
+    const data = await res.json();
+    if (!res.ok) { errEl.textContent = data.error || 'Login failed'; errEl.style.display = 'block'; return; }
+    authToken = data.token;
+    currentUser = data;
+    localStorage.setItem('hawk_token', authToken);
+    hideLoginModal();
+    buildSportFilters();
+    await checkSettings();
+    await loadCards();
+    await loadStats();
+  } catch (e) { errEl.textContent = 'Connection error'; errEl.style.display = 'block'; }
+}
+
+async function submitRegister() {
+  const username = document.getElementById('reg-username').value.trim();
+  const password = document.getElementById('reg-password').value;
+  const confirm = document.getElementById('reg-confirm').value;
+  const errEl = document.getElementById('reg-error');
+  errEl.style.display = 'none';
+  if (!username || !password) { errEl.textContent = 'All fields required'; errEl.style.display = 'block'; return; }
+  if (password !== confirm) { errEl.textContent = 'Passwords do not match'; errEl.style.display = 'block'; return; }
+  if (password.length < 6) { errEl.textContent = 'Password must be at least 6 characters'; errEl.style.display = 'block'; return; }
+  try {
+    const res = await fetch('/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }) });
+    const data = await res.json();
+    if (!res.ok) { errEl.textContent = data.error || 'Registration failed'; errEl.style.display = 'block'; return; }
+    authToken = data.token;
+    currentUser = data;
+    localStorage.setItem('hawk_token', authToken);
+    hideLoginModal();
+    buildSportFilters();
+    await checkSettings();
+    await loadCards();
+    await loadStats();
+  } catch (e) { errEl.textContent = 'Connection error'; errEl.style.display = 'block'; }
+}
+
+async function logout() {
+  document.getElementById('dropdown-menu').classList.remove('open');
+  try { await api('/api/auth/logout', { method: 'POST' }); } catch {}
+  authToken = null;
+  currentUser = null;
+  localStorage.removeItem('hawk_token');
+  showLoginModal();
+}
 
 // ========== INIT ==========
 document.addEventListener('DOMContentLoaded', async () => {
+  const authed = await checkAuth();
+  if (!authed) return;
   buildSportFilters();
   await checkSettings();
   await loadCards();
@@ -201,7 +294,7 @@ async function loadCards() {
   if (search) params.set('search', search);
 
   try {
-    const res = await fetch(`/api/cards?${params}`);
+    const res = await api(`/api/cards?${params}`);
     const cards = await res.json();
 
     const grid = document.getElementById('cards-grid');
@@ -250,7 +343,7 @@ async function loadCards() {
     }
 
     // Update header stats
-    const allCards = await (await fetch('/api/cards')).json();
+    const allCards = await (await api('/api/cards')).json();
     const total = allCards.length;
     const value = allCards.reduce((s, c) => s + (c.estimated_value || 0), 0);
     document.getElementById('stat-count').textContent = `${total} cards`;
@@ -296,8 +389,8 @@ function clearSearch() {
 async function openDetail(id) {
   try {
     const [card, history] = await Promise.all([
-      fetch(`/api/cards/${id}`).then(r => r.json()),
-      fetch(`/api/cards/${id}/price-history`).then(r => r.json()),
+      api(`/api/cards/${id}`).then(r => r.json()),
+      api(`/api/cards/${id}/price-history`).then(r => r.json()),
     ]);
 
     currentDetailHistory = history;
@@ -398,7 +491,7 @@ async function runMarketCheck(id) {
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Fetching...'; }
   showAI('Market Check', 'Searching eBay · PWCC · Goldin · Heritage · CollX · 130pt', 'Finding real sold prices across all sources by grade');
   try {
-    const res = await fetch(`/api/cards/${id}/market-check`, { method: 'POST' });
+    const res = await api(`/api/cards/${id}/market-check`, { method: 'POST' });
     const data = await res.json();
     hideAI();
     if (data.error) { showToast(data.error, 'error'); if (btn) { btn.disabled = false; btn.textContent = '🔍 Market Check'; } return; }
@@ -689,7 +782,7 @@ function closeDetail() {
 
 async function editCard(id) {
   closeDetail();
-  const card = await (await fetch(`/api/cards/${id}`)).json();
+  const card = await (await api(`/api/cards/${id}`)).json();
   editingId = id;
   currentImagePath = card.image_path || '';
 
@@ -720,11 +813,10 @@ async function editCard(id) {
 }
 
 async function toggleDupe(id, current) {
-  const card = await (await fetch(`/api/cards/${id}`)).json();
+  const card = await (await api(`/api/cards/${id}`)).json();
   card.is_duplicate = current ? 0 : 1;
-  await fetch(`/api/cards/${id}`, {
+  await api(`/api/cards/${id}`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(card)
   });
   closeDetail();
@@ -734,7 +826,7 @@ async function toggleDupe(id, current) {
 
 async function deleteCard(id) {
   if (!confirm('Delete this card from your collection?')) return;
-  await fetch(`/api/cards/${id}`, { method: 'DELETE' });
+  await api(`/api/cards/${id}`, { method: 'DELETE' });
   closeDetail();
   loadCards();
   showToast('Card deleted');
@@ -822,13 +914,13 @@ function getFormData() {
 // Run price lookup in background after saving — no overlay, no blocking
 async function silentPriceCheck(id) {
   try {
-    const card = await (await fetch(`/api/cards/${id}`)).json();
+    const card = await (await api(`/api/cards/${id}`)).json();
     let result;
     try {
       // Try client-side first (fast)
       result = await lookupPriceClientSide(buildKeywordsClient(card));
-      await fetch(`/api/cards/${id}/set-price`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+      await api(`/api/cards/${id}/set-price`, {
+        method: 'POST',
         body: JSON.stringify({
           price: result.estimated_value, source: result.source || 'eBay',
           range_low: result.value_range_low, range_high: result.value_range_high,
@@ -837,7 +929,7 @@ async function silentPriceCheck(id) {
       });
     } catch (e) {
       // Full market check — grade breakdown, all sources, saves internally
-      const res = await fetch(`/api/cards/${id}/market-check`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+      const res = await api(`/api/cards/${id}/market-check`, { method: 'POST' });
       result = await res.json();
     }
     if (!result || result.error || !(result.estimated_value > 0)) return;
@@ -862,18 +954,16 @@ async function saveCard() {
       switchView('scan');
       showToast(`Card ${idx + 1} updated`);
     } else if (editingId) {
-      await fetch(`/api/cards/${editingId}`, {
+      await api(`/api/cards/${editingId}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data)
       });
       showToast('Card updated!');
       resetForm();
       switchView('collection');
     } else {
-      const res = await fetch('/api/cards', {
+      const res = await api('/api/cards', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data)
       });
       const saved = await res.json();
@@ -1016,7 +1106,7 @@ async function lookupValue() {
 }
 
 async function lookupDetailValue(id) {
-  const card = await (await fetch(`/api/cards/${id}`)).json();
+  const card = await (await api(`/api/cards/${id}`)).json();
   showAI('Market check...', `Searching for ${card.player_name}...`, 'eBay · PWCC · Goldin · Heritage · CollX · 130point');
 
   try {
@@ -1024,8 +1114,8 @@ async function lookupDetailValue(id) {
     try {
       // Try client-side first (fast, user's IP bypasses eBay block)
       result = await lookupPriceClientSide(buildKeywordsClient(card));
-      await fetch(`/api/cards/${id}/set-price`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+      await api(`/api/cards/${id}/set-price`, {
+        method: 'POST',
         body: JSON.stringify({
           price: result.estimated_value, source: result.source || 'eBay',
           range_low: result.value_range_low, range_high: result.value_range_high,
@@ -1034,7 +1124,7 @@ async function lookupDetailValue(id) {
       });
     } catch (e) {
       // Full multi-source market check — grade breakdown, all sources, saves to DB internally
-      const res = await fetch(`/api/cards/${id}/market-check`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+      const res = await api(`/api/cards/${id}/market-check`, { method: 'POST' });
       result = await res.json();
     }
     hideAI();
@@ -1060,9 +1150,8 @@ async function setManualPrice(id) {
   const price = parseFloat(val);
   if (isNaN(price) || price <= 0) { showToast('Invalid price', 'error'); return; }
   try {
-    await fetch(`/api/cards/${id}/set-price`, {
+    await api(`/api/cards/${id}/set-price`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ price, source: 'Manual' })
     });
     showToast(`Price set to $${price.toFixed(2)}`, 'success');
@@ -1318,7 +1407,7 @@ async function processScans() {
 // ========== STATS ==========
 async function loadStats() {
   try {
-    const stats = await (await fetch('/api/stats')).json();
+    const stats = await (await api('/api/stats')).json();
     const tv = stats.totalValue || 0;
 
     let html = `
@@ -1469,10 +1558,22 @@ function buildPortfolioChart(history) {
 }
 
 // ========== EXPORT ==========
-function exportCSV() {
+async function exportCSV() {
   document.getElementById('dropdown-menu').classList.remove('open');
-  window.open('/api/export/csv', '_blank');
-  showToast('CSV exported!');
+  try {
+    const res = await api('/api/export/csv');
+    if (!res.ok) { showToast('Export failed', 'error'); return; }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `card-vault-${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('CSV exported!');
+  } catch (e) {
+    showToast('Export failed', 'error');
+  }
 }
 
 function resetAll() {
@@ -1481,9 +1582,9 @@ function resetAll() {
   if (!confirm('Are you really sure? This will permanently delete your entire collection.')) return;
 
   // Delete all cards one by one (to also delete images)
-  fetch('/api/cards').then(r => r.json()).then(async cards => {
+  api('/api/cards').then(r => r.json()).then(async cards => {
     for (const c of cards) {
-      await fetch(`/api/cards/${c.id}`, { method: 'DELETE' });
+      await api(`/api/cards/${c.id}`, { method: 'DELETE' });
     }
     loadCards();
     showToast('Collection reset');
@@ -1663,9 +1764,8 @@ async function saveBulkCards() {
   const savedIds = [];
   for (const card of bulkReviewCards) {
     try {
-      const res = await fetch('/api/cards', {
+      const res = await api('/api/cards', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           player_name: card.player_name || '',
           team: card.team || '',

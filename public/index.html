@@ -43,6 +43,7 @@
             <button onclick="exportCSV()">📥 Export CSV</button>
             <button onclick="openSettings()">⚙️ Settings</button>
             <hr>
+            <button onclick="logout()">🚪 Sign Out</button>
             <button onclick="resetAll()" class="danger">🗑 Reset Collection</button>
           </div>
         </div>
@@ -371,6 +372,48 @@
 
     <!-- Toast -->
     <div id="toast" class="toast" style="display:none"></div>
+  </div>
+
+  <!-- Login / Register Modal -->
+  <div id="login-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:999;align-items:center;justify-content:center;padding:24px">
+    <div class="login-card">
+      <div style="text-align:center;margin-bottom:24px">
+        <h1 class="logo" style="font-size:24px;color:var(--accent)">HAWKCOLLECTS</h1>
+        <p class="logo-num" style="color:rgba(255,205,0,0.4);letter-spacing:5px;font-size:10px;margin-top:4px">2317</p>
+      </div>
+      <div class="login-tabs">
+        <button class="login-tab active" id="tab-login" onclick="showLoginTab('login')">Sign In</button>
+        <button class="login-tab" id="tab-register" onclick="showLoginTab('register')">Create Account</button>
+      </div>
+      <div id="login-form">
+        <div class="field" style="margin-bottom:12px">
+          <label>Username</label>
+          <input type="text" id="login-username" placeholder="Your username" autocomplete="username">
+        </div>
+        <div class="field" style="margin-bottom:20px">
+          <label>Password</label>
+          <input type="password" id="login-password" placeholder="Your password" autocomplete="current-password" onkeydown="if(event.key==='Enter')submitLogin()">
+        </div>
+        <button class="btn-primary" style="width:100%" onclick="submitLogin()">Sign In</button>
+        <p id="login-error" style="color:var(--red);font-size:12px;text-align:center;margin-top:10px;display:none"></p>
+      </div>
+      <div id="register-form" style="display:none">
+        <div class="field" style="margin-bottom:12px">
+          <label>Choose a Username</label>
+          <input type="text" id="reg-username" placeholder="e.g. hawkdad" autocomplete="username">
+        </div>
+        <div class="field" style="margin-bottom:12px">
+          <label>Password</label>
+          <input type="password" id="reg-password" placeholder="At least 6 characters" autocomplete="new-password">
+        </div>
+        <div class="field" style="margin-bottom:20px">
+          <label>Confirm Password</label>
+          <input type="password" id="reg-confirm" placeholder="Repeat password" autocomplete="new-password" onkeydown="if(event.key==='Enter')submitRegister()">
+        </div>
+        <button class="btn-primary" style="width:100%" onclick="submitRegister()">Create Account</button>
+        <p id="reg-error" style="color:var(--red);font-size:12px;text-align:center;margin-top:10px;display:none"></p>
+      </div>
+    </div>
   </div>
 
   <script src="/app.js"></script>
