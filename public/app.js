@@ -35,6 +35,10 @@ const PLAYERS_DB = [
   {n:'Lamar Jackson',s:'Football',t:'Ravens'},{n:'Jalen Hurts',s:'Football',t:'Eagles'},
   {n:'Joe Burrow',s:'Football',t:'Bengals'},{n:'Caleb Williams',s:'Football',t:'Bears'},
   {n:'Jayden Daniels',s:'Football',t:'Commanders'},{n:'Drake Maye',s:'Football',t:'Patriots'},
+  {n:'Jaxon Dart',s:'Football',t:'Giants'},{n:'Cam Ward',s:'Football',t:'Titans'},
+  {n:'Travis Hunter',s:'Football',t:'Jaguars'},{n:'Ashton Jeanty',s:'Football',t:'Raiders'},
+  {n:'Tetairoa McMillan',s:'Football',t:'Panthers'},{n:'Abdul Carter',s:'Football',t:'Giants'},
+  {n:'Will Johnson',s:'Football',t:'Steelers'},{n:'Mason Graham',s:'Football',t:'Browns'},
   {n:'CJ Stroud',s:'Football',t:'Texans'},{n:'Brock Purdy',s:'Football',t:'49ers'},
   {n:'Justin Herbert',s:'Football',t:'Chargers'},{n:'Trevor Lawrence',s:'Football',t:'Jaguars'},
   {n:'Dak Prescott',s:'Football',t:'Cowboys'},{n:'Anthony Richardson',s:'Football',t:'Colts'},
@@ -1936,24 +1940,93 @@ function saveRecentSearch(query) {
 }
 
 function updateAutocomplete() {
-  const query = (document.getElementById('market-input')?.value || '').trim().toLowerCase();
+  const raw = document.getElementById('market-input')?.value || '';
+  const query = raw.trim().toLowerCase();
   const ac = document.getElementById('market-autocomplete');
   if (!ac) return;
   if (!query) { ac.style.display = 'none'; showMarketHome(); return; }
+
   const matches = PLAYERS_DB.filter(p =>
     p.n.toLowerCase().includes(query) || p.t.toLowerCase().includes(query)
-  ).slice(0, 7);
-  if (!matches.length) { ac.style.display = 'none'; return; }
-  ac.innerHTML = matches.map(p => `
-    <div class="ac-item" onmousedown="selectSearch(${JSON.stringify(p.n)})">
+  ).slice(0, 6);
+
+  // Always include a free-text "Search for X" row at the bottom
+  const freeText = `<div class="ac-item ac-freetext" onmousedown="selectSearch(${JSON.stringify(raw.trim())})">
+    <span class="ac-sport">🔍</span>
+    <div class="ac-info">
+      <span class="ac-name">Search "<strong>${esc(raw.trim())}</strong>"</span>
+      <span class="ac-team">Find cards &amp; prices</span>
+    </div>
+    <span class="ac-go">→</span>
+  </div>`;
+
+  const playerRows = matches.map(p => `
+    <div class="ac-item" onmousedown="selectPlayer(${JSON.stringify(p.n)})">
       <span class="ac-sport">${sportEmoji[p.s] || '🃏'}</span>
       <div class="ac-info">
         <span class="ac-name">${esc(p.n)}</span>
         <span class="ac-team">${esc(p.t)} · ${esc(p.s)}</span>
       </div>
-      <span class="ac-go">→</span>
+      <span class="ac-go ac-catalog">All cards →</span>
     </div>`).join('');
+
+  ac.innerHTML = playerRows + freeText;
   ac.style.display = 'block';
+}
+
+// Tap a known player → show their full card catalog
+function selectPlayer(playerName) {
+  const input = document.getElementById('market-input');
+  if (input) input.value = playerName;
+  hideAutocomplete();
+  searchPlayerCatalog(playerName);
+}
+
+async function searchPlayerCatalog(playerName) {
+  const el = document.getElementById('market-results');
+  el.innerHTML = `<div class="market-loading">Finding all ${esc(playerName)} cards...</div>`;
+  try {
+    const res = await fetch('/api/player-catalog', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ player: playerName }),
+    });
+    const data = await res.json();
+    if (data.error) { el.innerHTML = `<p class="market-empty">${esc(data.error)}</p>`; return; }
+    el.innerHTML = renderPlayerCatalog(data);
+  } catch (e) {
+    el.innerHTML = '<p class="market-empty">Search failed — check your Gemini key in Settings</p>';
+  }
+}
+
+function renderPlayerCatalog(data) {
+  const { cards, player } = data;
+  const byYear = {};
+  for (const c of cards) {
+    if (!byYear[c.year]) byYear[c.year] = [];
+    byYear[c.year].push(c);
+  }
+  const years = Object.keys(byYear).sort((a, b) => b - a);
+
+  const sections = years.map(yr => `
+    <div class="catalog-year-group">
+      <p class="catalog-year">${yr}</p>
+      <div class="catalog-grid">
+        ${byYear[yr].map(c => `
+          <div class="catalog-card" onmousedown="selectSearch(${JSON.stringify(c.year + ' ' + c.brand + ' ' + c.set)})">
+            <p class="catalog-set">${esc(c.set)}</p>
+            <p class="catalog-brand">${esc(c.brand)}</p>
+            <p class="catalog-price">${esc(c.price)}</p>
+          </div>`).join('')}
+      </div>
+    </div>`).join('');
+
+  return `<div class="catalog-wrap">
+    <div class="catalog-header">
+      <p class="catalog-player">${esc(player)}</p>
+      <p class="market-section-label">${cards.length} cards found — tap any to check prices</p>
+    </div>
+    ${sections}
+  </div>`;
 }
 
 function hideAutocomplete() {

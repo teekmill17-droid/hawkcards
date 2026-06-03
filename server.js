@@ -1093,6 +1093,64 @@ app.post('/api/market-price', async (req, res) => {
   res.json({ ...marketData, estimated_value: estimatedValue, keywords });
 });
 
+// Player catalog — lists all known card sets/products for a player
+app.post('/api/player-catalog', async (req, res) => {
+  const { player } = req.body || {};
+  if (!player) return res.status(400).json({ error: 'player required' });
+
+  const geminiKey = getGeminiKey();
+  if (!geminiKey) return res.status(400).json({ error: 'Add a Gemini key in Settings' });
+
+  const models = ['gemini-2.0-flash', 'gemini-1.5-flash'];
+  const prompt = `Use Google Search to find all sports cards made for the player: "${player}"
+
+Search eBay, PWCC, Goldin, 130point, Panini, Topps, and card databases.
+
+For EACH distinct card product found, output EXACTLY this format on its own line:
+CARD: [year] | [brand] | [full set name] | [price range raw]
+
+Examples:
+CARD: 2024 | Panini | Prizm Football | $12-25
+CARD: 2024 | Panini | Prizm Football Silver PSA 10 | $65-120
+CARD: 2024 | Topps | Chrome Football | $8-18
+CARD: 2024 | Bowman | Chrome | $5-12
+CARD: 2023 | Panini | Prizm Football | $8-15
+
+Rules:
+- Include all years this player has cards
+- Include base sets AND their graded (PSA 9/10) versions as separate entries
+- Include major parallels (Silver, Gold, Prizm) as separate entries
+- Sort by most valuable/collectible first
+- List up to 30 cards`;
+
+  for (const model of models) {
+    try {
+      const r = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            tools: [{ google_search: {} }],
+            generationConfig: { temperature: 0.1, maxOutputTokens: 1500 },
+          }),
+          signal: AbortSignal.timeout(20000),
+        }
+      );
+      if (!r.ok) continue;
+      const data = await r.json();
+      const text = (data?.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('');
+      const cards = [];
+      for (const m of text.matchAll(/CARD:\s*(\d{4})\s*\|\s*([^|\n]+?)\s*\|\s*([^|\n]+?)\s*\|\s*([^|\n]+)/g)) {
+        cards.push({ year: m[1].trim(), brand: m[2].trim(), set: m[3].trim(), price: m[4].trim() });
+      }
+      if (cards.length > 0) return res.json({ cards, player });
+    } catch (e) { console.log(`player-catalog ${model}:`, e.message); }
+  }
+  res.status(500).json({ error: 'Could not find cards for this player — try a more specific name' });
+});
+
 app.get('/api/debug/price', async (req, res) => {
   const keywords = req.query.q || 'Patrick Mahomes 2017 Panini Prizm';
   const log = [];

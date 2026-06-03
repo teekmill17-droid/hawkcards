@@ -1049,6 +1049,26 @@ body {
 .popular-name { font-size: 12px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
 .popular-team { font-size: 10px; color: var(--text-4); flex-shrink: 0; }
 
+/* Autocomplete free-text row */
+.ac-freetext { border-top: 1px solid var(--border-2); background: rgba(255,205,0,0.03); }
+.ac-catalog { font-size: 10px; color: var(--accent); font-weight: 700; }
+
+/* Player card catalog */
+.catalog-wrap { padding-bottom: 20px; }
+.catalog-header { margin-bottom: 18px; }
+.catalog-player { font-size: 20px; font-weight: 800; color: var(--text); margin-bottom: 4px; }
+.catalog-year-group { margin-bottom: 20px; }
+.catalog-year { font-size: 13px; font-weight: 700; color: var(--accent); margin-bottom: 10px; letter-spacing: 0.5px; }
+.catalog-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.catalog-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  padding: 12px; cursor: pointer; transition: border-color 0.15s, background 0.15s;
+}
+.catalog-card:hover, .catalog-card:active { border-color: var(--accent-border); background: var(--surface-2); }
+.catalog-set { font-size: 12px; font-weight: 700; color: var(--text); margin: 0 0 3px; line-height: 1.3; }
+.catalog-brand { font-size: 10px; color: var(--text-4); margin: 0 0 6px; }
+.catalog-price { font-size: 12px; font-weight: 700; color: var(--accent); margin: 0; }
+
 /* Variant pills */
 .variant-section { margin-bottom: 14px; }
 .variant-pills { display: flex; flex-wrap: wrap; gap: 6px; }

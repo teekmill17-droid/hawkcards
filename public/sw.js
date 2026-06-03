@@ -1,4 +1,4 @@
-const CACHE = 'hawkcollects-v3';
+const CACHE = 'hawkcollects-v4';
 const SHELL = ['/', '/style.css', '/app.js', '/manifest.json', '/icon.svg'];
 
 self.addEventListener('install', e => {
