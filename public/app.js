@@ -26,6 +26,62 @@ let viewMode = 'list';
 let sortMode = 'value';
 let authToken = localStorage.getItem('hawk_token') || null;
 let currentUser = null;
+let recentSearches = JSON.parse(localStorage.getItem('hawk_recent_searches') || '[]');
+
+// Popular player list for autocomplete
+const PLAYERS_DB = [
+  // Football
+  {n:'Patrick Mahomes',s:'Football',t:'Chiefs'},{n:'Josh Allen',s:'Football',t:'Bills'},
+  {n:'Lamar Jackson',s:'Football',t:'Ravens'},{n:'Jalen Hurts',s:'Football',t:'Eagles'},
+  {n:'Joe Burrow',s:'Football',t:'Bengals'},{n:'Caleb Williams',s:'Football',t:'Bears'},
+  {n:'Jayden Daniels',s:'Football',t:'Commanders'},{n:'Drake Maye',s:'Football',t:'Patriots'},
+  {n:'CJ Stroud',s:'Football',t:'Texans'},{n:'Brock Purdy',s:'Football',t:'49ers'},
+  {n:'Justin Herbert',s:'Football',t:'Chargers'},{n:'Trevor Lawrence',s:'Football',t:'Jaguars'},
+  {n:'Dak Prescott',s:'Football',t:'Cowboys'},{n:'Anthony Richardson',s:'Football',t:'Colts'},
+  {n:'Michael Penix Jr',s:'Football',t:'Falcons'},{n:'Jaxon Smith-Njigba',s:'Football',t:'Seahawks'},
+  {n:'Ja Marr Chase',s:'Football',t:'Bengals'},{n:'Justin Jefferson',s:'Football',t:'Vikings'},
+  {n:'CeeDee Lamb',s:'Football',t:'Cowboys'},{n:'Tyreek Hill',s:'Football',t:'Dolphins'},
+  {n:'Davante Adams',s:'Football',t:'Raiders'},{n:'Garrett Wilson',s:'Football',t:'Jets'},
+  {n:'Drake London',s:'Football',t:'Falcons'},{n:'Puka Nacua',s:'Football',t:'Rams'},
+  {n:'Bijan Robinson',s:'Football',t:'Falcons'},{n:'Breece Hall',s:'Football',t:'Jets'},
+  {n:'Christian McCaffrey',s:'Football',t:'49ers'},{n:'Travis Kelce',s:'Football',t:'Chiefs'},
+  {n:'Brock Bowers',s:'Football',t:'Raiders'},{n:'Sam LaPorta',s:'Football',t:'Lions'},
+  {n:'Micah Parsons',s:'Football',t:'Cowboys'},{n:'Nick Bosa',s:'Football',t:'49ers'},
+  {n:'Sauce Gardner',s:'Football',t:'Jets'},{n:'Myles Garrett',s:'Football',t:'Browns'},
+  // Baseball
+  {n:'Aaron Judge',s:'Baseball',t:'Yankees'},{n:'Shohei Ohtani',s:'Baseball',t:'Dodgers'},
+  {n:'Gunnar Henderson',s:'Baseball',t:'Orioles'},{n:'Paul Skenes',s:'Baseball',t:'Pirates'},
+  {n:'Jackson Holliday',s:'Baseball',t:'Orioles'},{n:'Julio Rodriguez',s:'Baseball',t:'Mariners'},
+  {n:'Mike Trout',s:'Baseball',t:'Angels'},{n:'Ronald Acuna Jr',s:'Baseball',t:'Braves'},
+  {n:'Yordan Alvarez',s:'Baseball',t:'Astros'},{n:'Corey Seager',s:'Baseball',t:'Rangers'},
+  {n:'Bobby Witt Jr',s:'Baseball',t:'Royals'},{n:'Freddie Freeman',s:'Baseball',t:'Dodgers'},
+  {n:'Corbin Carroll',s:'Baseball',t:'Diamondbacks'},{n:'Adley Rutschman',s:'Baseball',t:'Orioles'},
+  {n:'Jackson Chourio',s:'Baseball',t:'Brewers'},{n:'James Wood',s:'Baseball',t:'Nationals'},
+  {n:'Pete Alonso',s:'Baseball',t:'Mets'},{n:'Spencer Torkelson',s:'Baseball',t:'Tigers'},
+  {n:'Francisco Lindor',s:'Baseball',t:'Mets'},{n:'Manny Machado',s:'Baseball',t:'Padres'},
+  {n:'Trea Turner',s:'Baseball',t:'Phillies'},{n:'Jackson Merrill',s:'Baseball',t:'Padres'},
+  // Basketball
+  {n:'Victor Wembanyama',s:'Basketball',t:'Spurs'},{n:'LeBron James',s:'Basketball',t:'Lakers'},
+  {n:'Stephen Curry',s:'Basketball',t:'Warriors'},{n:'Luka Doncic',s:'Basketball',t:'Mavericks'},
+  {n:'Giannis Antetokounmpo',s:'Basketball',t:'Bucks'},{n:'Joel Embiid',s:'Basketball',t:'76ers'},
+  {n:'Nikola Jokic',s:'Basketball',t:'Nuggets'},{n:'Anthony Edwards',s:'Basketball',t:'Timberwolves'},
+  {n:'Jayson Tatum',s:'Basketball',t:'Celtics'},{n:'Shai Gilgeous-Alexander',s:'Basketball',t:'Thunder'},
+  {n:'Chet Holmgren',s:'Basketball',t:'Thunder'},{n:'Paolo Banchero',s:'Basketball',t:'Magic'},
+  {n:'Zion Williamson',s:'Basketball',t:'Pelicans'},{n:'Ja Morant',s:'Basketball',t:'Grizzlies'},
+  {n:'Donovan Mitchell',s:'Basketball',t:'Cavaliers'},{n:'Kevin Durant',s:'Basketball',t:'Suns'},
+  {n:'Devin Booker',s:'Basketball',t:'Suns'},{n:'Cade Cunningham',s:'Basketball',t:'Pistons'},
+  {n:'Scoot Henderson',s:'Basketball',t:'Blazers'},{n:'Brandon Miller',s:'Basketball',t:'Hornets'},
+  {n:'Amen Thompson',s:'Basketball',t:'Rockets'},{n:'Ausar Thompson',s:'Basketball',t:'Pistons'},
+  {n:'Evan Mobley',s:'Basketball',t:'Cavaliers'},{n:'Franz Wagner',s:'Basketball',t:'Magic'},
+];
+
+const BRAND_VARIANTS = {
+  'Prizm':  ['Silver','Gold /10','Red /149','Blue /199','Purple /49','Green /75','Red White Blue','Hyper','Disco','Holo'],
+  'Chrome': ['Base Refractor','Gold /50','Blue /150','Red /5','Orange /25','Purple /10','SuperFractor 1/1','Atomic','Negative'],
+  'Optic':  ['Base','Holo','Gold /10','Blue /149','Red /99','Pink /50','Purple /25'],
+  'Bowman': ['Base','Gold /50','Blue /150','Red /5','Aqua /25','Orange /25','Purple /10'],
+  'Topps':  ['Base','Gold /2024','Rainbow Foil','Chrome','Platinum Anniversary'],
+};
 
 // ========== AUTH API HELPER ==========
 function api(url, opts = {}) {
@@ -78,8 +134,8 @@ async function submitLogin() {
     hideLoginModal();
     buildSportFilters();
     await checkSettings();
-    await loadCards();
     await loadStats();
+    showMarketHome();
   } catch (e) { errEl.textContent = 'Connection error'; errEl.style.display = 'block'; }
 }
 
@@ -102,8 +158,8 @@ async function submitRegister() {
     hideLoginModal();
     buildSportFilters();
     await checkSettings();
-    await loadCards();
     await loadStats();
+    showMarketHome();
   } catch (e) { errEl.textContent = 'Connection error'; errEl.style.display = 'block'; }
 }
 
@@ -122,8 +178,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (!authed) return;
   buildSportFilters();
   await checkSettings();
-  await loadCards();
   await loadStats();
+  showMarketHome(); // start on search tab
 
   // Close menu on outside click
   document.addEventListener('click', (e) => {
@@ -1838,9 +1894,96 @@ function editBulkCard(index) {
 }
 
 // ========== MARKET SEARCH ==========
+
+function showMarketHome() {
+  const el = document.getElementById('market-results');
+  if (!el) return;
+  const recentsHtml = recentSearches.length ? `
+    <div class="market-section">
+      <p class="market-section-label">Recent Searches</p>
+      ${recentSearches.map(s => `
+        <div class="recent-item" onclick="selectSearch(${JSON.stringify(s)})">
+          <span class="recent-icon">🕐</span>
+          <span class="recent-name">${esc(s)}</span>
+          <span class="recent-go">→</span>
+        </div>`).join('')}
+    </div>` : '';
+  const popularHtml = `
+    <div class="market-section">
+      <p class="market-section-label">Popular Players</p>
+      <div class="popular-grid">
+        ${PLAYERS_DB.slice(0,12).map(p => `
+          <div class="popular-item" onclick="selectSearch(${JSON.stringify(p.n)})">
+            <span class="popular-sport">${sportEmoji[p.s] || '🃏'}</span>
+            <span class="popular-name">${esc(p.n)}</span>
+            <span class="popular-team">${esc(p.t)}</span>
+          </div>`).join('')}
+      </div>
+    </div>`;
+  el.innerHTML = recentsHtml + popularHtml;
+}
+
+function selectSearch(query) {
+  const input = document.getElementById('market-input');
+  if (input) input.value = query;
+  hideAutocomplete();
+  searchMarket();
+}
+
+function saveRecentSearch(query) {
+  recentSearches = [query, ...recentSearches.filter(s => s !== query)].slice(0, 10);
+  localStorage.setItem('hawk_recent_searches', JSON.stringify(recentSearches));
+}
+
+function updateAutocomplete() {
+  const query = (document.getElementById('market-input')?.value || '').trim().toLowerCase();
+  const ac = document.getElementById('market-autocomplete');
+  if (!ac) return;
+  if (!query) { ac.style.display = 'none'; showMarketHome(); return; }
+  const matches = PLAYERS_DB.filter(p =>
+    p.n.toLowerCase().includes(query) || p.t.toLowerCase().includes(query)
+  ).slice(0, 7);
+  if (!matches.length) { ac.style.display = 'none'; return; }
+  ac.innerHTML = matches.map(p => `
+    <div class="ac-item" onmousedown="selectSearch(${JSON.stringify(p.n)})">
+      <span class="ac-sport">${sportEmoji[p.s] || '🃏'}</span>
+      <div class="ac-info">
+        <span class="ac-name">${esc(p.n)}</span>
+        <span class="ac-team">${esc(p.t)} · ${esc(p.s)}</span>
+      </div>
+      <span class="ac-go">→</span>
+    </div>`).join('');
+  ac.style.display = 'block';
+}
+
+function hideAutocomplete() {
+  const ac = document.getElementById('market-autocomplete');
+  if (ac) ac.style.display = 'none';
+}
+
+function buildVariantPills(query) {
+  const grades = ['PSA 10','PSA 9','PSA 8','Raw'];
+  const qLower = query.toLowerCase();
+  let parallels = [];
+  for (const [brand, vars] of Object.entries(BRAND_VARIANTS)) {
+    if (qLower.includes(brand.toLowerCase())) { parallels = vars.slice(0, 6); break; }
+  }
+  if (!parallels.length) parallels = ['Prizm','Chrome','Optic','Bowman','Topps'];
+  const base = query.replace(/\b(psa\s*\d+|raw|graded)\b/gi, '').trim();
+  const gradePills = grades.map(g => `<button class="variant-pill grade" onmousedown="selectSearch(${JSON.stringify(base + ' ' + g)})">${g}</button>`).join('');
+  const parallelPills = parallels.map(p => `<button class="variant-pill" onmousedown="selectSearch(${JSON.stringify(base + ' ' + p)})">${esc(p)}</button>`).join('');
+  return `<div class="variant-section">
+    <p class="market-section-label" style="margin-bottom:8px">Browse Types</p>
+    <div class="variant-pills">${gradePills}</div>
+    <div class="variant-pills" style="margin-top:6px">${parallelPills}</div>
+  </div>`;
+}
+
 async function searchMarket() {
   const query = document.getElementById('market-input')?.value.trim();
   if (!query) return;
+  hideAutocomplete();
+  saveRecentSearch(query);
   const el = document.getElementById('market-results');
   el.innerHTML = '<div class="market-loading">Searching eBay, PWCC, Goldin, Heritage, Fanatics...</div>';
   try {
@@ -1860,6 +2003,7 @@ async function searchMarket() {
 function renderMarketResult(data, query) {
   const gradeBreakdown = buildPriceBreakdown(data.grades, data.raw?.avg, data.by_source);
   const comps = buildRecentComps(data.recent_sales || []);
+  const variantPills = buildVariantPills(query);
   const trendColor = data.trend === 'up' ? '#34d399' : data.trend === 'down' ? '#ef4444' : 'var(--text-3)';
   const trendIcon = data.trend === 'up' ? '↑' : data.trend === 'down' ? '↓' : '→';
   return `<div class="market-result">
@@ -1873,6 +2017,7 @@ function renderMarketResult(data, query) {
         <p style="font-size:10px;color:var(--text-4)">est. value</p>
       </div>` : ''}
     </div>
+    ${variantPills}
     ${gradeBreakdown}
     ${comps}
   </div>`;
